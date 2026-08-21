@@ -1707,3 +1707,435 @@ tbody tr:last-child td{
     width:100%;
   }
 }
+
+
+
+/* =========================================================
+   OFTALMOCASTRO — REFINAMENTO VISUAL FINAL
+   Layout mais bonito, leve e otimizado
+   ========================================================= */
+
+:root{
+  --bg:#f5f7f8;
+  --surface:#ffffff;
+  --surface-soft:#f8fafb;
+  --text:#1f3039;
+  --muted:#74838c;
+  --primary:#315f72;
+  --primary-strong:#274e5e;
+  --primary-2:#4d8191;
+  --primary-soft:#eaf2f5;
+  --green:#4f8a6b;
+  --green-soft:#edf6f0;
+  --yellow:#b9802b;
+  --yellow-soft:#fff5df;
+  --red:#b85c5c;
+  --red-soft:#fbeeee;
+  --border:#e1e8eb;
+  --border-strong:#d4dee3;
+  --shadow-sm:0 4px 14px rgba(36,55,70,.045);
+  --shadow:0 10px 28px rgba(36,55,70,.065);
+  --shadow-lg:0 24px 60px rgba(31,48,57,.14);
+  --radius-sm:10px;
+  --radius:16px;
+  --radius-lg:24px;
+}
+
+/* corpo */
+body{
+  background:
+    radial-gradient(circle at 100% 0,rgba(71,127,145,.055),transparent 24rem),
+    linear-gradient(180deg,#fafcfc 0%,#f4f7f8 320px);
+}
+
+/* sidebar mais limpa */
+.sidebar{
+  width:264px;
+  padding:24px 16px 18px;
+  background:rgba(255,255,255,.985);
+  border-right:1px solid #e6ecef;
+  box-shadow:8px 0 28px rgba(36,55,70,.018);
+}
+
+.main{
+  width:calc(100% - 264px);
+  margin-left:264px;
+  padding:32px 34px 56px;
+}
+
+.brand{
+  padding:3px 8px 22px;
+}
+
+.brand-mark{
+  width:44px;
+  height:44px;
+  border-radius:13px;
+}
+
+.brand b{
+  font-size:18px;
+}
+
+.user-box{
+  padding:12px;
+  border-radius:12px;
+  background:#f8fafb;
+}
+
+.launcher-select{
+  height:40px;
+  min-height:40px;
+  margin-top:9px;
+  border:1px solid #d9e4e8;
+  background:#fff;
+  font-size:11.5px;
+  cursor:pointer;
+}
+
+.nav button{
+  min-height:44px;
+  border-radius:11px;
+  font-size:13px;
+}
+
+.nav button.active{
+  background:#edf4f6;
+  box-shadow:inset 3px 0 0 var(--primary);
+}
+
+/* cabeçalho */
+.topbar{
+  margin-bottom:22px;
+}
+
+.topbar h1{
+  font-size:28px;
+}
+
+.subtitle{
+  font-size:13px;
+}
+
+/* cards mais leves */
+.card{
+  border-radius:17px;
+  box-shadow:0 8px 22px rgba(36,55,70,.055);
+}
+
+.kpi,
+.analysis-card{
+  box-shadow:0 5px 16px rgba(36,55,70,.045);
+}
+
+.kpi:hover,
+.analysis-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 10px 22px rgba(36,55,70,.075);
+}
+
+/* inputs */
+input,
+select,
+textarea{
+  border-color:#dce5e9;
+  border-radius:10px;
+  background:#fff;
+}
+
+input:focus,
+select:focus,
+textarea:focus{
+  border-color:#7ea6b3;
+  box-shadow:0 0 0 3px rgba(75,130,146,.09);
+}
+
+/* botões */
+.btn{
+  min-height:40px;
+  border-radius:10px;
+  font-size:12px;
+}
+
+.btn-primary{
+  background:linear-gradient(135deg,#315f72,#3e7386);
+  box-shadow:0 6px 15px rgba(49,95,114,.15);
+}
+
+.btn-primary:hover{
+  box-shadow:0 8px 18px rgba(49,95,114,.20);
+}
+
+/* tabelas */
+.table-wrap{
+  border-radius:12px;
+  box-shadow:inset 0 0 0 1px rgba(225,232,235,.35);
+}
+
+th{
+  font-size:9.5px;
+  background:#f7f9fa;
+}
+
+td{
+  padding:13px 12px;
+}
+
+tbody tr:hover{
+  background:#f9fbfc;
+}
+
+.row-actions{
+  min-width:122px;
+}
+
+/* modais */
+.modal{
+  background:rgba(22,36,45,.48);
+  backdrop-filter:blur(7px);
+}
+
+.modal-card{
+  border-radius:20px;
+  box-shadow:0 28px 70px rgba(20,35,45,.18);
+}
+
+/* resultados */
+.results-toolbar{
+  background:linear-gradient(135deg,#ffffff,#f9fbfc);
+}
+
+.results-highlights{
+  gap:14px;
+}
+
+.insight-card{
+  border-left:3px solid #d6e5ea;
+}
+
+/* gráficos */
+.bar-bg{
+  height:9px;
+}
+
+.bar{
+  background:linear-gradient(90deg,#315f72,#7ca6b2);
+}
+
+/* cadastros */
+.catalog-card-large{
+  border-radius:16px;
+  background:#fff;
+}
+
+.catalog-card-large .catalog-item{
+  border-radius:10px;
+}
+
+/* =========================================================
+   LOGIN — MAIS PROFISSIONAL
+   ========================================================= */
+
+.login-page{
+  position:relative;
+  overflow:hidden;
+  min-height:100vh;
+  padding:24px;
+  background:
+    radial-gradient(circle at 12% 18%,rgba(71,127,145,.13),transparent 25rem),
+    radial-gradient(circle at 88% 82%,rgba(49,95,114,.08),transparent 30rem),
+    linear-gradient(135deg,#eaf1f3 0%,#f8fafb 55%,#edf3f5 100%);
+}
+
+.login-page::before,
+.login-page::after{
+  content:"";
+  position:absolute;
+  border-radius:50%;
+  pointer-events:none;
+}
+
+.login-page::before{
+  width:360px;
+  height:360px;
+  top:-170px;
+  right:-110px;
+  border:1px solid rgba(49,95,114,.08);
+}
+
+.login-page::after{
+  width:260px;
+  height:260px;
+  left:-120px;
+  bottom:-110px;
+  background:rgba(75,130,146,.035);
+}
+
+.login-card{
+  position:relative;
+  z-index:1;
+  width:min(420px,100%);
+  padding:40px 38px 34px;
+  border:1px solid rgba(49,95,114,.10);
+  border-radius:24px;
+  background:rgba(255,255,255,.985);
+  box-shadow:0 28px 70px rgba(35,54,67,.13);
+}
+
+.login-card::before{
+  height:4px;
+  background:linear-gradient(90deg,#315f72,#6b9daa);
+}
+
+.login-card>.brand-mark{
+  width:58px;
+  height:58px;
+  margin-bottom:16px;
+  border-radius:17px;
+  box-shadow:0 10px 24px rgba(49,95,114,.18);
+}
+
+.login-card h1{
+  font-size:27px;
+  font-weight:800;
+}
+
+.login-card>p{
+  margin:7px 0 28px;
+  font-size:12.5px;
+}
+
+.login-card label{
+  margin-top:15px;
+  margin-bottom:7px;
+  color:#52636d;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.055em;
+}
+
+.login-card input{
+  min-height:50px;
+  padding:0 14px;
+  border-radius:12px;
+  font-size:13px;
+}
+
+.login-card input::placeholder{
+  color:#a5b0b6;
+}
+
+/* campo senha com botão ver/ocultar */
+.password-field{
+  position:relative;
+  width:100%;
+}
+
+.password-field input{
+  padding-right:78px;
+}
+
+.password-toggle{
+  position:absolute;
+  top:50%;
+  right:7px;
+  transform:translateY(-50%);
+  min-width:62px;
+  height:36px;
+  padding:0 10px;
+  border:0;
+  border-radius:9px;
+  color:var(--primary);
+  background:var(--primary-soft);
+  font-size:10.5px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.password-toggle:hover{
+  background:#dcebef;
+  transform:translateY(-50%);
+}
+
+.login-btn{
+  min-height:50px;
+  margin-top:22px;
+  font-size:12.5px;
+  font-weight:800;
+  letter-spacing:.01em;
+}
+
+.login-error{
+  margin-top:13px;
+  padding:10px 12px;
+  border-radius:10px;
+}
+
+/* =========================================================
+   RESPONSIVIDADE OTIMIZADA
+   ========================================================= */
+
+@media(max-width:1150px){
+  .main{
+    padding-left:26px;
+    padding-right:26px;
+  }
+}
+
+@media(max-width:900px){
+  .sidebar{
+    width:100%;
+    padding:15px;
+  }
+
+  .main{
+    width:100%;
+    margin-left:0;
+    padding:20px 16px 42px;
+  }
+
+  .topbar{
+    gap:14px;
+  }
+
+  .topbar h1{
+    font-size:24px;
+  }
+}
+
+@media(max-width:600px){
+  .login-page{
+    padding:12px;
+    align-items:center;
+  }
+
+  .login-card{
+    padding:32px 22px 28px;
+    border-radius:20px;
+  }
+
+  .login-card h1{
+    font-size:25px;
+  }
+
+  .password-toggle{
+    min-width:58px;
+  }
+
+  .card{
+    padding:15px;
+  }
+
+  .top-actions{
+    gap:7px;
+  }
+
+  .top-actions .btn{
+    width:100%;
+    flex:none;
+  }
+
+  .row-actions{
+    min-width:116px;
+  }
+}

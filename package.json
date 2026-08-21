@@ -11,6 +11,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
     "@vitejs/plugin-react": "latest",
+    "exceljs": "^4.4.0",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest",

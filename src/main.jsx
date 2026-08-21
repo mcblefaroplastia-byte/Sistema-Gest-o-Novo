@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { supabase } from './supabase';
 import './styles.css';
 
@@ -96,6 +96,7 @@ function accessLabel(profile){
 function Login({onLogged}) {
   const [email,setEmail] = useState('');
   const [password,setPassword] = useState('');
+  const [showPassword,setShowPassword] = useState(false);
   const [loading,setLoading] = useState(false);
   const [error,setError] = useState('');
 
@@ -114,7 +115,14 @@ function Login({onLogged}) {
       <h1>Oftalmocastro</h1>
       <p>Gestão de exames e cirurgias</p>
       <Field label="E-mail"><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></Field>
-      <Field label="Senha"><input type="password" value={password} onChange={e=>setPassword(e.target.value)} required /></Field>
+      <Field label="Senha">
+        <div className="password-field">
+          <input type={showPassword ? 'text' : 'password'} value={password} onChange={e=>setPassword(e.target.value)} required />
+          <button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
+            {showPassword ? 'Ocultar' : 'Ver'}
+          </button>
+        </div>
+      </Field>
       {error&&<div className="login-error">{error}</div>}
       <button className="btn btn-primary login-btn" disabled={loading}>{loading?'Entrando...':'Entrar'}</button>
     </form>
@@ -538,87 +546,468 @@ function App(){
       suRate:totalSu?Math.round(realSu/totalSu*100):0};
   },[dashboardExams,dashboardSurgeries]);
 
-  const exportExcel=()=>{
-    const month=dashMonth||'todos-periodos';
+  const exportExcel = async ()=>{
+    const month = dashMonth || 'todos-periodos';
+    const periodLabel = monthLabel(dashMonth);
+    const selectedDoctor = dashDoctor ? doctors.find(d=>d.id===dashDoctor)?.name || '-' : 'Todos';
+    const selectedUser = dashUser || 'Todos';
+    const selectedStatus = dashStatus || 'Todos';
 
-    const examRows=dashboardExams.map(r=>({
-      Data:brDate(r.date),
-      Paciente:r.patient,
-      WhatsApp:r.whatsapp,
-      Médico:r.doctor,
-      Exame:r.exam,
-      Status:r.status,
-      'Lançado por':launchedName(r),
-      Observação:r.obs
-    }));
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Oftalmocastro';
+    workbook.lastModifiedBy = currentAccessName || 'Sistema';
+    workbook.created = new Date();
+    workbook.modified = new Date();
 
-    const surgeryRows=dashboardSurgeries.map(r=>({
-      Data:brDate(r.date),
-      Paciente:r.patient,
-      WhatsApp:r.whatsapp,
-      Cirurgião:r.doctor,
-      Procedimento:r.procedure,
-      Olho:r.eye,
-      Convênio:r.insurance||'Particular',
-      Status:r.status,
-      'Horário chegada':r.arrival,
-      'Horário cirurgia':r.time,
-      Pagamento:r.payment,
-      'Lançado por':launchedName(r),
-      Observação:r.obs
-    }));
+    const COLORS = {
+      primary: '315F72',
+      primary2: '4D8191',
+      primarySoft: 'EAF2F5',
+      text: '20313B',
+      muted: '74838C',
+      white: 'FFFFFF',
+      green: '4F8A6B',
+      greenSoft: 'EDF6F0',
+      yellow: 'B9802B',
+      yellowSoft: 'FFF5DF',
+      red: 'B85C5C',
+      redSoft: 'FBEEEE',
+      border: 'DDE6EA',
+      soft: 'F7FAFB'
+    };
 
-    const userExport=userRows.map(r=>({
-      Usuário:r.name,
-      Exames:r.exams,
-      Cirurgias:r.surgeries,
-      Total:r.exams+r.surgeries
-    }));
+    const border = {
+      top:{style:'thin',color:{argb:COLORS.border}},
+      left:{style:'thin',color:{argb:COLORS.border}},
+      bottom:{style:'thin',color:{argb:COLORS.border}},
+      right:{style:'thin',color:{argb:COLORS.border}}
+    };
 
-    const summaryRows=[
-      ['RELATÓRIO MENSAL - OFTALMOCASTRO'],
-      ['Período',monthLabel(dashMonth)],
-      ['Médico',dashDoctor ? doctors.find(d=>d.id===dashDoctor)?.name||'-' : 'Todos'],
-      ['Responsável',dashUser||'Todos'],
-      ['Status',dashStatus||'Todos'],
-      [],
-      ['INDICADORES GERAIS'],
-      ['Pacientes únicos',resultSummary.uniquePatients],
-      ['Total de exames',resultSummary.totalEx],
-      ['Exames realizados',resultSummary.realEx],
-      ['Taxa de realização dos exames',`${resultSummary.exRate}%`],
-      ['Total de cirurgias',resultSummary.totalSu],
-      ['Cirurgias realizadas',resultSummary.realSu],
-      ['Taxa de realização das cirurgias',`${resultSummary.suRate}%`],
-      [],
-      ['DESTAQUES'],
-      ['Exame mais realizado',resultSummary.examTop?.[0]||'-',resultSummary.examTop?.[1]||0],
-      ['Cirurgia mais registrada',resultSummary.surgTop?.[0]||'-',resultSummary.surgTop?.[1]||0],
-      ['Profissional com maior volume',resultSummary.doctorTop?.[0]||'-',resultSummary.doctorTop?.[1]||0]
+    const styleTitle = (cell, size=20) => {
+      cell.font = {name:'Aptos Display',size,bold:true,color:{argb:COLORS.white}};
+      cell.fill = {type:'pattern',pattern:'solid',fgColor:{argb:COLORS.primary}};
+      cell.alignment = {vertical:'middle',horizontal:'left'};
+    };
+
+    const styleSection = (cell) => {
+      cell.font = {name:'Aptos',size:11,bold:true,color:{argb:COLORS.primary}};
+      cell.fill = {type:'pattern',pattern:'solid',fgColor:{argb:COLORS.primarySoft}};
+      cell.alignment = {vertical:'middle'};
+      cell.border = border;
+    };
+
+    const statusStyle = status => {
+      const s = String(status || '').toLowerCase();
+      if(s.includes('realiz')) return {fill:COLORS.greenSoft,font:COLORS.green};
+      if(s.includes('cancel')) return {fill:COLORS.redSoft,font:COLORS.red};
+      if(s.includes('autoriz') || s.includes('aguard')) return {fill:COLORS.yellowSoft,font:COLORS.yellow};
+      return {fill:COLORS.primarySoft,font:COLORS.primary};
+    };
+
+    const styleStatusCells = (ws, statusColumn, startRow, endRow) => {
+      for(let r=startRow;r<=endRow;r++){
+        const cell = ws.getCell(r,statusColumn);
+        if(!cell.value) continue;
+        const st = statusStyle(cell.value);
+        cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:st.fill}};
+        cell.font={name:'Aptos',size:10,bold:true,color:{argb:st.font}};
+        cell.alignment={horizontal:'center',vertical:'middle'};
+        cell.border=border;
+      }
+    };
+
+    const downloadWorkbook = async()=>{
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer],{
+        type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Oftalmocastro_Relatorio_${month}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    };
+
+    const makeBarChartImage = async(title, data, width=900, height=420) => {
+      const entries = Object.entries(data)
+        .sort((a,b)=>b[1]-a[1])
+        .slice(0,10);
+
+      const canvas=document.createElement('canvas');
+      canvas.width=width;
+      canvas.height=height;
+      const ctx=canvas.getContext('2d');
+
+      ctx.fillStyle='#FFFFFF';
+      ctx.fillRect(0,0,width,height);
+
+      ctx.fillStyle='#20313B';
+      ctx.font='700 26px Arial';
+      ctx.fillText(title,34,42);
+
+      if(!entries.length){
+        ctx.fillStyle='#74838C';
+        ctx.font='18px Arial';
+        ctx.fillText('Sem dados para o período selecionado.',34,95);
+        return canvas.toDataURL('image/png');
+      }
+
+      const max=Math.max(...entries.map(([,v])=>v),1);
+      const top=75;
+      const left=250;
+      const right=70;
+      const rowH=Math.min(31,(height-top-30)/entries.length);
+      const barMax=width-left-right;
+
+      ctx.font='14px Arial';
+      entries.forEach(([label,value],i)=>{
+        const y=top+i*rowH;
+        const safeLabel=String(label).length>27 ? `${String(label).slice(0,26)}…` : String(label);
+
+        ctx.fillStyle='#53636E';
+        ctx.textAlign='right';
+        ctx.fillText(safeLabel,left-14,y+16);
+
+        ctx.fillStyle='#EAF2F5';
+        ctx.fillRect(left,y+3,barMax,17);
+
+        ctx.fillStyle='#315F72';
+        ctx.fillRect(left,y+3,Math.max(4,(value/max)*barMax),17);
+
+        ctx.fillStyle='#20313B';
+        ctx.textAlign='left';
+        ctx.font='700 14px Arial';
+        ctx.fillText(String(value),left+Math.max(4,(value/max)*barMax)+8,y+16);
+        ctx.font='14px Arial';
+      });
+
+      ctx.textAlign='left';
+      ctx.strokeStyle='#DDE6EA';
+      ctx.strokeRect(0,0,width,height);
+      return canvas.toDataURL('image/png');
+    };
+
+    // =========================
+    // RESUMO EXECUTIVO
+    // =========================
+    const wsSummary = workbook.addWorksheet('Resumo Executivo',{
+      views:[{showGridLines:false}]
+    });
+
+    wsSummary.columns=[
+      {width:4},{width:25},{width:19},{width:19},{width:19},{width:19},{width:19},{width:19},{width:4}
     ];
 
-    const wb=XLSX.utils.book_new();
-    const wsSummary=XLSX.utils.aoa_to_sheet(summaryRows);
-    const wsExams=XLSX.utils.json_to_sheet(examRows.length?examRows:[{Aviso:'Nenhum exame no período selecionado'}]);
-    const wsSurgeries=XLSX.utils.json_to_sheet(surgeryRows.length?surgeryRows:[{Aviso:'Nenhuma cirurgia no período selecionado'}]);
-    const wsUsers=XLSX.utils.json_to_sheet(userExport);
+    wsSummary.mergeCells('B2:H3');
+    styleTitle(wsSummary.getCell('B2'),22);
+    wsSummary.getCell('B2').value='OFTALMOCASTRO • RELATÓRIO GERENCIAL';
+    wsSummary.getRow(2).height=25;
+    wsSummary.getRow(3).height=25;
 
-    wsSummary['!cols']=[{wch:36},{wch:30},{wch:14}];
-    wsExams['!cols']=[{wch:13},{wch:28},{wch:18},{wch:24},{wch:28},{wch:18},{wch:18},{wch:45}];
-    wsSurgeries['!cols']=[{wch:13},{wch:28},{wch:18},{wch:24},{wch:30},{wch:18},{wch:22},{wch:22},{wch:18},{wch:18},{wch:18},{wch:18},{wch:45}];
-    wsUsers['!cols']=[{wch:22},{wch:14},{wch:14},{wch:14}];
+    wsSummary.mergeCells('B4:H4');
+    wsSummary.getCell('B4').value=`Período: ${periodLabel}`;
+    wsSummary.getCell('B4').font={name:'Aptos',size:11,bold:true,color:{argb:COLORS.primary}};
+    wsSummary.getCell('B4').alignment={vertical:'middle'};
+    wsSummary.getRow(4).height=22;
 
-    wsSummary['!autofilter']={ref:'A7:C18'};
-    if(examRows.length) wsExams['!autofilter']={ref:wsExams['!ref']};
-    if(surgeryRows.length) wsSurgeries['!autofilter']={ref:wsSurgeries['!ref']};
-    wsUsers['!autofilter']={ref:wsUsers['!ref']};
+    wsSummary.getCell('B6').value='FILTROS APLICADOS';
+    wsSummary.mergeCells('B6:H6');
+    styleSection(wsSummary.getCell('B6'));
+    wsSummary.getRow(6).height=24;
 
-    XLSX.utils.book_append_sheet(wb,wsSummary,'Resumo');
-    XLSX.utils.book_append_sheet(wb,wsExams,'Exames');
-    XLSX.utils.book_append_sheet(wb,wsSurgeries,'Cirurgias');
-    XLSX.utils.book_append_sheet(wb,wsUsers,'Lançamentos');
+    const filterRows=[
+      ['Médico',selectedDoctor],
+      ['Responsável',selectedUser],
+      ['Status',selectedStatus]
+    ];
+    filterRows.forEach((row,index)=>{
+      const r=7+index;
+      wsSummary.getCell(r,2).value=row[0];
+      wsSummary.getCell(r,2).font={bold:true,color:{argb:COLORS.muted}};
+      wsSummary.getCell(r,3).value=row[1];
+      wsSummary.mergeCells(r,3,r,8);
+      wsSummary.getCell(r,3).font={color:{argb:COLORS.text}};
+      wsSummary.getCell(r,2).border=border;
+      wsSummary.getCell(r,3).border=border;
+      wsSummary.getCell(r,3).alignment={vertical:'middle'};
+      wsSummary.getRow(r).height=22;
+    });
 
-    XLSX.writeFile(wb,`Oftalmocastro_Relatorio_${month}.xlsx`);
+    wsSummary.getCell('B11').value='INDICADORES DO PERÍODO';
+    wsSummary.mergeCells('B11:H11');
+    styleSection(wsSummary.getCell('B11'));
+    wsSummary.getRow(11).height=24;
+
+    const kpis=[
+      {range:'B13:C15',label:'Pacientes únicos',value:resultSummary.uniquePatients},
+      {range:'D13:E15',label:'Total de exames',value:resultSummary.totalEx},
+      {range:'F13:G15',label:'Exames realizados',value:resultSummary.realEx},
+      {range:'B17:C19',label:'Total de cirurgias',value:resultSummary.totalSu},
+      {range:'D17:E19',label:'Cirurgias realizadas',value:resultSummary.realSu},
+      {range:'F17:G19',label:'Total de lançamentos',value:resultSummary.totalEx+resultSummary.totalSu}
+    ];
+
+    kpis.forEach(k=>{
+      wsSummary.mergeCells(k.range);
+      const cell=wsSummary.getCell(k.range.split(':')[0]);
+      cell.value={richText:[
+        {text:`${k.label}
+`,font:{name:'Aptos',size:10,bold:true,color:{argb:COLORS.muted}}},
+        {text:String(k.value),font:{name:'Aptos Display',size:24,bold:true,color:{argb:COLORS.primary}}}
+      ]};
+      cell.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
+      cell.border=border;
+    });
+
+    wsSummary.getCell('B21').value='EFICIÊNCIA';
+    wsSummary.mergeCells('B21:H21');
+    styleSection(wsSummary.getCell('B21'));
+
+    const efficiency=[
+      ['Taxa de realização dos exames',resultSummary.exRate/100],
+      ['Taxa de realização das cirurgias',resultSummary.suRate/100]
+    ];
+    efficiency.forEach((item,i)=>{
+      const r=22+i;
+      wsSummary.getCell(r,2).value=item[0];
+      wsSummary.mergeCells(r,2,r,5);
+      wsSummary.getCell(r,6).value=item[1];
+      wsSummary.mergeCells(r,6,r,7);
+      wsSummary.getCell(r,6).numFmt='0%';
+      wsSummary.getCell(r,6).font={bold:true,color:{argb:COLORS.primary}};
+      for(let c=2;c<=7;c++) wsSummary.getCell(r,c).border=border;
+    });
+
+    wsSummary.getCell('B26').value='DESTAQUES';
+    wsSummary.mergeCells('B26:H26');
+    styleSection(wsSummary.getCell('B26'));
+
+    const highlights=[
+      ['Exame com maior volume',resultSummary.examTop?.[0]||'Sem dados',resultSummary.examTop?.[1]||0],
+      ['Cirurgia com maior volume',resultSummary.surgTop?.[0]||'Sem dados',resultSummary.surgTop?.[1]||0],
+      ['Profissional com maior volume',resultSummary.doctorTop?.[0]||'Sem dados',resultSummary.doctorTop?.[1]||0]
+    ];
+    highlights.forEach((item,i)=>{
+      const r=27+i;
+      wsSummary.getCell(r,2).value=item[0];
+      wsSummary.getCell(r,3).value=item[1];
+      wsSummary.mergeCells(r,3,r,6);
+      wsSummary.getCell(r,7).value=item[2];
+      wsSummary.getCell(r,7).alignment={horizontal:'center'};
+      wsSummary.getCell(r,2).font={bold:true,color:{argb:COLORS.muted}};
+      wsSummary.getCell(r,3).font={bold:true,color:{argb:COLORS.text}};
+      wsSummary.getCell(r,7).font={bold:true,color:{argb:COLORS.primary}};
+      for(let c=2;c<=7;c++) wsSummary.getCell(r,c).border=border;
+    });
+
+    wsSummary.getCell('B32').value='Lançamentos por responsável';
+    wsSummary.mergeCells('B32:H32');
+    styleSection(wsSummary.getCell('B32'));
+
+    ['Responsável','Exames','Cirurgias','Total','Participação'].forEach((h,i)=>{
+      const c=2+i;
+      wsSummary.getCell(33,c).value=h;
+      wsSummary.getCell(33,c).font={bold:true,color:{argb:COLORS.white}};
+      wsSummary.getCell(33,c).fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.primary2}};
+      wsSummary.getCell(33,c).alignment={horizontal:'center'};
+      wsSummary.getCell(33,c).border=border;
+    });
+
+    const totalAll=resultSummary.totalEx+resultSummary.totalSu;
+    userRows.forEach((u,i)=>{
+      const r=34+i;
+      const total=u.exams+u.surgeries;
+      const values=[u.name,u.exams,u.surgeries,total,totalAll?total/totalAll:0];
+      values.forEach((v,j)=>{
+        const cell=wsSummary.getCell(r,2+j);
+        cell.value=v;
+        cell.border=border;
+        cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:i%2===0?'FFFFFF':'F8FAFB'}};
+        cell.alignment={horizontal:j===0?'left':'center'};
+      });
+      wsSummary.getCell(r,6).numFmt='0%';
+    });
+
+    wsSummary.pageSetup={
+      orientation:'portrait',
+      fitToPage:true,
+      fitToWidth:1,
+      fitToHeight:0,
+      margins:{left:.3,right:.3,top:.5,bottom:.5,header:.2,footer:.2}
+    };
+
+    // =========================
+    // ANÁLISE GRÁFICA
+    // =========================
+    const wsCharts=workbook.addWorksheet('Análise Gráfica',{
+      views:[{showGridLines:false}]
+    });
+    wsCharts.columns=Array.from({length:12},()=>({width:12}));
+
+    wsCharts.mergeCells('A1:L2');
+    styleTitle(wsCharts.getCell('A1'),20);
+    wsCharts.getCell('A1').value='ANÁLISE GRÁFICA • OFTALMOCASTRO';
+
+    wsCharts.mergeCells('A3:L3');
+    wsCharts.getCell('A3').value=`Período analisado: ${periodLabel} • Médico: ${selectedDoctor} • Responsável: ${selectedUser} • Status: ${selectedStatus}`;
+    wsCharts.getCell('A3').font={size:10,color:{argb:COLORS.muted}};
+    wsCharts.getCell('A3').alignment={vertical:'middle'};
+
+    const charts=[
+      ['Exames por tipo',countBy(dashboardExams,'exam'),'A5:F20'],
+      ['Exames por médico',countBy(dashboardExams,'doctor'),'G5:L20'],
+      ['Cirurgias por procedimento',countBy(dashboardSurgeries,'procedure'),'A22:F37'],
+      ['Lançamentos por responsável',Object.fromEntries(userRows.map(u=>[u.name,u.exams+u.surgeries])),'G22:L37']
+    ];
+
+    for(const [title,data,range] of charts){
+      const png=await makeBarChartImage(title,data);
+      const imageId=workbook.addImage({base64:png,extension:'png'});
+      const [from,to]=range.split(':');
+      wsCharts.addImage(imageId,{tl:{col:wsCharts.getCell(from).col-1,row:wsCharts.getCell(from).row-1},
+                                 br:{col:wsCharts.getCell(to).col,row:wsCharts.getCell(to).row}});
+    }
+
+    wsCharts.mergeCells('A39:L39');
+    wsCharts.getCell('A39').value='Leitura rápida';
+    styleSection(wsCharts.getCell('A39'));
+    wsCharts.mergeCells('A40:L43');
+    wsCharts.getCell('A40').value =
+      `Neste período foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} cirurgias, `+
+      `com ${resultSummary.uniquePatients} pacientes únicos. A taxa de realização foi de ${resultSummary.exRate}% nos exames `+
+      `e ${resultSummary.suRate}% nas cirurgias. O exame com maior volume foi ${resultSummary.examTop?.[0]||'—'} `+
+      `e o procedimento cirúrgico com maior volume foi ${resultSummary.surgTop?.[0]||'—'}.`;
+    wsCharts.getCell('A40').alignment={wrapText:true,vertical:'top'};
+    wsCharts.getCell('A40').font={size:11,color:{argb:COLORS.text}};
+    wsCharts.getCell('A40').fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
+    wsCharts.getCell('A40').border=border;
+
+    // =========================
+    // EXAMES
+    // =========================
+    const wsExams=workbook.addWorksheet('Exames',{
+      views:[{state:'frozen',ySplit:3,showGridLines:false}]
+    });
+
+    wsExams.mergeCells('A1:H1');
+    styleTitle(wsExams.getCell('A1'),18);
+    wsExams.getCell('A1').value=`EXAMES • ${periodLabel}`;
+    wsExams.mergeCells('A2:H2');
+    wsExams.getCell('A2').value=`Filtros: Médico ${selectedDoctor} | Responsável ${selectedUser} | Status ${selectedStatus}`;
+    wsExams.getCell('A2').font={size:10,color:{argb:COLORS.muted}};
+
+    const examHeaders=['Data','Paciente','WhatsApp','Médico','Exame','Status','Lançado por','Observação'];
+    const examRows=dashboardExams.map(r=>[
+      brDate(r.date),r.patient,r.whatsapp,r.doctor,r.exam,r.status,launchedName(r),r.obs
+    ]);
+
+    wsExams.addTable({
+      name:'TabelaExames',
+      ref:'A3',
+      headerRow:true,
+      totalsRow:false,
+      style:{theme:'TableStyleMedium2',showRowStripes:true},
+      columns:examHeaders.map(name=>({name})),
+      rows:examRows.length?examRows:[['—','Nenhum exame no período','','','','','','']]
+    });
+
+    [13,28,18,24,30,18,18,45].forEach((w,i)=>wsExams.getColumn(i+1).width=w);
+    wsExams.getColumn(8).alignment={wrapText:true,vertical:'top'};
+    styleStatusCells(wsExams,6,4,3+Math.max(1,examRows.length));
+    wsExams.autoFilter={from:'A3',to:'H3'};
+    wsExams.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0};
+
+    // =========================
+    // CIRURGIAS
+    // =========================
+    const wsSurgeries=workbook.addWorksheet('Cirurgias',{
+      views:[{state:'frozen',ySplit:3,showGridLines:false}]
+    });
+
+    wsSurgeries.mergeCells('A1:M1');
+    styleTitle(wsSurgeries.getCell('A1'),18);
+    wsSurgeries.getCell('A1').value=`CIRURGIAS • ${periodLabel}`;
+    wsSurgeries.mergeCells('A2:M2');
+    wsSurgeries.getCell('A2').value=`Filtros: Médico ${selectedDoctor} | Responsável ${selectedUser} | Status ${selectedStatus}`;
+    wsSurgeries.getCell('A2').font={size:10,color:{argb:COLORS.muted}};
+
+    const surgeryHeaders=[
+      'Data','Paciente','WhatsApp','Cirurgião','Procedimento','Olho','Convênio',
+      'Status','Horário chegada','Horário cirurgia','Pagamento','Lançado por','Observação'
+    ];
+    const surgeryRows=dashboardSurgeries.map(r=>[
+      brDate(r.date),r.patient,r.whatsapp,r.doctor,r.procedure,r.eye,r.insurance||'Particular',
+      r.status,r.arrival,r.time,r.payment,launchedName(r),r.obs
+    ]);
+
+    wsSurgeries.addTable({
+      name:'TabelaCirurgias',
+      ref:'A3',
+      headerRow:true,
+      totalsRow:false,
+      style:{theme:'TableStyleMedium2',showRowStripes:true},
+      columns:surgeryHeaders.map(name=>({name})),
+      rows:surgeryRows.length?surgeryRows:[['—','Nenhuma cirurgia no período','','','','','','','','','','','']]
+    });
+
+    [13,28,18,24,30,18,22,22,18,18,18,18,45].forEach((w,i)=>wsSurgeries.getColumn(i+1).width=w);
+    wsSurgeries.getColumn(13).alignment={wrapText:true,vertical:'top'};
+    styleStatusCells(wsSurgeries,8,4,3+Math.max(1,surgeryRows.length));
+    wsSurgeries.autoFilter={from:'A3',to:'M3'};
+    wsSurgeries.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0};
+
+    // =========================
+    // LANÇAMENTOS
+    // =========================
+    const wsUsers=workbook.addWorksheet('Lançamentos',{
+      views:[{showGridLines:false}]
+    });
+    wsUsers.columns=[{width:24},{width:16},{width:16},{width:16},{width:16}];
+
+    wsUsers.mergeCells('A1:E1');
+    styleTitle(wsUsers.getCell('A1'),18);
+    wsUsers.getCell('A1').value=`LANÇAMENTOS POR RESPONSÁVEL • ${periodLabel}`;
+
+    const userData=userRows.map(u=>{
+      const total=u.exams+u.surgeries;
+      return [u.name,u.exams,u.surgeries,total,totalAll?total/totalAll:0];
+    });
+
+    wsUsers.addTable({
+      name:'TabelaLancamentos',
+      ref:'A3',
+      headerRow:true,
+      totalsRow:true,
+      style:{theme:'TableStyleMedium2',showRowStripes:true},
+      columns:[
+        {name:'Responsável',totalsRowLabel:'TOTAL'},
+        {name:'Exames',totalsRowFunction:'sum'},
+        {name:'Cirurgias',totalsRowFunction:'sum'},
+        {name:'Total',totalsRowFunction:'sum'},
+        {name:'Participação',totalsRowFunction:'none'}
+      ],
+      rows:userData
+    });
+
+    for(let r=4;r<4+userData.length;r++) wsUsers.getCell(r,5).numFmt='0%';
+
+    wsUsers.mergeCells('A11:E11');
+    wsUsers.getCell('A11').value='Indicador de produtividade';
+    styleSection(wsUsers.getCell('A11'));
+    wsUsers.mergeCells('A12:E14');
+    wsUsers.getCell('A12').value='Use esta aba para acompanhar o volume de registros de Juliana, Luiza, Elisangela e ADM. A participação considera o total de lançamentos do período selecionado.';
+    wsUsers.getCell('A12').alignment={wrapText:true,vertical:'top'};
+    wsUsers.getCell('A12').fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
+    wsUsers.getCell('A12').border=border;
+
+    // Aba inicial
+    workbook.views=[{activeTab:0}];
+
+    await downloadWorkbook();
   };
 
   const logout=async()=>{ sessionStorage.removeItem('oc_launcher_name'); setLauncherName(''); await supabase.auth.signOut(); setProfile(null); };
@@ -912,7 +1301,7 @@ function App(){
             <div className="manual-number">09</div>
             <h3>Exportar para Excel</h3>
             <p>Na página Resultados, aplique os filtros desejados e clique em <b>Exportar relatório Excel</b>.</p>
-            <p>O arquivo é gerado com quatro abas: <b>Resumo, Exames, Cirurgias e Lançamentos</b>, facilitando conferência e fechamento mensal.</p>
+            <p>O arquivo é gerado com cinco abas: <b>Resumo Executivo, Análise Gráfica, Exames, Cirurgias e Lançamentos</b>, com indicadores, cores, tabelas formatadas e gráficos para facilitar a análise mensal.</p>
           </article>
 
           <article className="card manual-card">
