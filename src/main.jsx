@@ -31,6 +31,71 @@ const countBy = (arr, key) => arr.reduce((o, x) => {
   return o;
 }, {});
 
+const countManyBy = (arr, key) => arr.reduce((o, x) => {
+  const values = Array.isArray(x[key]) && x[key].length ? x[key] : ['Não informado'];
+  values.forEach(k => { o[k] = (o[k] || 0) + 1; });
+  return o;
+}, {});
+
+const groupLaunchRows = (rows, kind) => {
+  const groups = new Map();
+
+  rows.forEach(r => {
+    const groupId = r.launch_group_id || r.id;
+    if(!groups.has(groupId)){
+      groups.set(groupId,{
+        group_id:groupId,
+        db_ids:[],
+        patient_id:r.patients?.id||'',
+        date:kind==='exam' ? r.exam_date : r.surgery_date,
+        patient:r.patients?.full_name||'',
+        whatsapp:r.patients?.whatsapp||'',
+        doctor:r.doctors?.name||'',
+        doctor_id:r.doctors?.id||'',
+        status:r.status,
+        obs:r.observation||'',
+        launchedBy:r.launched_by,
+        launchedByName:r.launched_by_name||''
+      });
+    }
+
+    const g=groups.get(groupId);
+    g.db_ids.push(r.id);
+
+    if(kind==='exam'){
+      g.exam_type_ids ||= [];
+      g.exam_names ||= [];
+      if(r.exam_types?.id) g.exam_type_ids.push(r.exam_types.id);
+      if(r.exam_types?.name) g.exam_names.push(r.exam_types.name);
+    }else{
+      g.procedure_ids ||= [];
+      g.procedure_names ||= [];
+      if(r.procedures?.id) g.procedure_ids.push(r.procedures.id);
+      if(r.procedures?.name) g.procedure_names.push(r.procedures.name);
+      g.eye=r.eye;
+      g.insurance=r.insurances?.name||'';
+      g.insurance_id=r.insurances?.id||'';
+      g.arrival=r.arrival_time||'';
+      g.time=r.surgery_time||'';
+      g.payment=r.payment_status||'';
+    }
+  });
+
+  return [...groups.values()].map(g=>({
+    ...g,
+    id:g.group_id,
+    ...(kind==='exam'
+      ? {
+          exam:g.exam_names.join(' • '),
+          exam_type_id:g.exam_type_ids[0]||''
+        }
+      : {
+          procedure:g.procedure_names.join(' • '),
+          procedure_id:g.procedure_ids[0]||''
+        })
+  }));
+};
+
 function WhatsAppIcon(){
   return <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M19.11 17.47c-.26-.13-1.52-.75-1.76-.84-.24-.09-.41-.13-.59.13-.17.26-.67.84-.82 1.02-.15.17-.3.2-.56.07-.26-.13-1.09-.4-2.08-1.29-.77-.68-1.29-1.53-1.44-1.79-.15-.26-.02-.4.11-.53.12-.12.26-.3.39-.45.13-.15.17-.26.26-.43.09-.17.04-.32-.02-.45-.07-.13-.59-1.42-.8-1.94-.21-.51-.43-.44-.59-.45h-.5c-.17 0-.45.07-.69.32-.24.26-.91.89-.91 2.17 0 1.27.93 2.5 1.06 2.67.13.17 1.82 2.78 4.41 3.9.62.27 1.1.43 1.47.55.62.2 1.18.17 1.62.1.49-.07 1.52-.62 1.73-1.22.21-.6.21-1.12.15-1.22-.07-.11-.24-.17-.5-.3Z"/><path fill="currentColor" d="M16.03 3C8.84 3 3 8.75 3 15.85c0 2.26.6 4.47 1.74 6.42L3 29l6.93-1.8a13.16 13.16 0 0 0 6.09 1.48h.01c7.18 0 13.02-5.76 13.02-12.84C29.05 8.75 23.21 3 16.03 3Zm0 23.51h-.01a10.94 10.94 0 0 1-5.57-1.51l-.4-.24-4.11 1.07 1.1-3.96-.26-.41a10.58 10.58 0 0 1-1.65-5.61C5.13 9.95 10.02 5.16 16.03 5.16S26.92 9.95 26.92 15.85c0 5.88-4.89 10.66-10.89 10.66Z"/></svg>;
 }
@@ -165,7 +230,7 @@ function App(){
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_id:'',eye:'Não se aplica',
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''
   });
 
@@ -209,13 +274,13 @@ function App(){
       supabase.from('insurances').select('*').eq('active',true).order('name'),
       supabase.from('profiles').select('id,full_name,role,active').eq('active',true).order('full_name'),
       supabase.from('exams').select(`
-        id,exam_date,status,observation,launched_by,launched_by_name,
+        id,launch_group_id,exam_date,status,observation,launched_by,launched_by_name,
         patients(id,full_name,whatsapp),
         doctors(id,name),
         exam_types(id,name)
       `).order('exam_date',{ascending:false}),
       supabase.from('surgeries').select(`
-        id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,
+        id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,
         patients(id,full_name,whatsapp),
         doctors(id,name),
         procedures(id,name),
@@ -234,43 +299,8 @@ function App(){
     setInsurances(insurancesRes.data || []);
     setProfiles(profilesRes.data || []);
 
-    setRecords((examsRes.data||[]).map(r=>({
-      id:r.id,
-      patient_id:r.patients?.id||'',
-      date:r.exam_date,
-      patient:r.patients?.full_name||'',
-      whatsapp:r.patients?.whatsapp||'',
-      doctor:r.doctors?.name||'',
-      doctor_id:r.doctors?.id||'',
-      exam:r.exam_types?.name||'',
-      exam_type_id:r.exam_types?.id||'',
-      status:r.status,
-      obs:r.observation||'',
-      launchedBy:r.launched_by,
-      launchedByName:r.launched_by_name || ''
-    })));
-
-    setSurgeries((surgeriesRes.data||[]).map(r=>({
-      id:r.id,
-      patient_id:r.patients?.id||'',
-      date:r.surgery_date,
-      patient:r.patients?.full_name||'',
-      whatsapp:r.patients?.whatsapp||'',
-      doctor:r.doctors?.name||'',
-      doctor_id:r.doctors?.id||'',
-      procedure:r.procedures?.name||'',
-      procedure_id:r.procedures?.id||'',
-      eye:r.eye,
-      insurance:r.insurances?.name||'',
-      insurance_id:r.insurances?.id||'',
-      status:r.status,
-      arrival:r.arrival_time||'',
-      time:r.surgery_time||'',
-      payment:r.payment_status||'',
-      obs:r.observation||'',
-      launchedBy:r.launched_by,
-      launchedByName:r.launched_by_name || ''
-    })));
+    setRecords(groupLaunchRows(examsRes.data||[],'exam'));
+    setSurgeries(groupLaunchRows(surgeriesRes.data||[],'surgery'));
     setLoading(false);
   };
 
@@ -300,7 +330,9 @@ function App(){
       return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
     try{
       const patient_id=await getOrCreatePatient(examForm.patient,examForm.whatsapp);
+      const launch_group_id=crypto.randomUUID();
       const rows=examForm.exam_type_ids.map(examTypeId=>({
+        launch_group_id,
         exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
         exam_type_id:examTypeId, status:examForm.status,
         observation:examForm.obs||null, launched_by:session.user.id,
@@ -316,15 +348,19 @@ function App(){
 
   const addSurgery = async ()=>{
     if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_id)
-      return alert('Preencha data, paciente, cirurgião e procedimento.');
+    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
+      return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
+
     try{
       const patient_id=await getOrCreatePatient(sForm.patient,sForm.whatsapp);
-      const {error}=await supabase.from('surgeries').insert({
+      const launch_group_id=crypto.randomUUID();
+
+      const rows=sForm.procedure_ids.map(procedureId=>({
+        launch_group_id,
         surgery_date:sForm.date,
         patient_id,
         doctor_id:sForm.doctor_id,
-        procedure_id:sForm.procedure_id,
+        procedure_id:procedureId,
         eye:sForm.eye,
         insurance_id:sForm.insurance_id||null,
         status:sForm.status,
@@ -334,12 +370,22 @@ function App(){
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:currentLaunchName
-      });
+      }));
+
+      const {error}=await supabase.from('surgeries').insert(rows);
       if(error) throw error;
+
       setSurgeryModal(false);
-      setSForm({...sForm,patient:'',whatsapp:'',obs:'',arrival:'',time:''});
+      setSForm({
+        date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],
+        eye:'Não se aplica',insurance_id:'',status:'Solicitação',
+        arrival:'',time:'',payment:'Não informado',obs:''
+      });
       await loadAll();
-    }catch(e){ console.error(e); alert('Não foi possível salvar a cirurgia.'); }
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível salvar os procedimentos cirúrgicos.');
+    }
   };
 
 
@@ -350,7 +396,7 @@ function App(){
       patient:r.patient,
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
-      exam_type_ids:[r.exam_type_id],
+      exam_type_ids:r.exam_type_ids||[],
       status:r.status,
       obs:r.obs || ''
     });
@@ -364,7 +410,7 @@ function App(){
       patient:r.patient,
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
-      procedure_id:r.procedure_id,
+      procedure_ids:r.procedure_ids||[],
       eye:r.eye || 'Não se aplica',
       insurance_id:r.insurance_id || '',
       status:r.status,
@@ -390,21 +436,27 @@ function App(){
     if(!original) return;
     if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
     if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
-      return alert('Preencha data, paciente, médico e exame.');
+      return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
 
     try{
       await updatePatient(original.patient_id, examForm.patient, examForm.whatsapp);
 
-      const {error}=await supabase.from('exams').update({
+      const {error:deleteError}=await supabase.from('exams').delete().in('id',original.db_ids);
+      if(deleteError) throw deleteError;
+
+      const rows=examForm.exam_type_ids.map(examTypeId=>({
+        launch_group_id:original.group_id,
         exam_date:examForm.date,
+        patient_id:original.patient_id,
         doctor_id:examForm.doctor_id,
-        exam_type_id:examForm.exam_type_ids[0],
+        exam_type_id:examTypeId,
         status:examForm.status,
         observation:examForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:currentLaunchName
-      }).eq('id',editingExamId);
+      }));
 
+      const {error}=await supabase.from('exams').insert(rows);
       if(error) throw error;
 
       setExamModal(false);
@@ -413,7 +465,7 @@ function App(){
       await loadAll();
     }catch(e){
       console.error(e);
-      alert('Não foi possível atualizar o exame.');
+      alert('Não foi possível atualizar o lançamento de exames.');
     }
   };
 
@@ -421,16 +473,21 @@ function App(){
     const original = surgeries.find(r=>r.id===editingSurgeryId);
     if(!original) return;
     if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_id)
-      return alert('Preencha data, paciente, cirurgião e procedimento.');
+    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
+      return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
 
     try{
       await updatePatient(original.patient_id, sForm.patient, sForm.whatsapp);
 
-      const {error}=await supabase.from('surgeries').update({
+      const {error:deleteError}=await supabase.from('surgeries').delete().in('id',original.db_ids);
+      if(deleteError) throw deleteError;
+
+      const rows=sForm.procedure_ids.map(procedureId=>({
+        launch_group_id:original.group_id,
         surgery_date:sForm.date,
+        patient_id:original.patient_id,
         doctor_id:sForm.doctor_id,
-        procedure_id:sForm.procedure_id,
+        procedure_id:procedureId,
         eye:sForm.eye,
         insurance_id:sForm.insurance_id||null,
         status:sForm.status,
@@ -440,17 +497,18 @@ function App(){
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:currentLaunchName
-      }).eq('id',editingSurgeryId);
+      }));
 
+      const {error}=await supabase.from('surgeries').insert(rows);
       if(error) throw error;
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_id:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
+      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
-      alert('Não foi possível atualizar a cirurgia.');
+      alert('Não foi possível atualizar o lançamento cirúrgico.');
     }
   };
 
@@ -463,18 +521,20 @@ function App(){
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_id:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
+    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
   };
 
   const delExam = async id=>{
-    if(!confirm('Tem certeza que deseja excluir este exame? Essa ação não poderá ser desfeita.')) return;
-    const {error}=await supabase.from('exams').delete().eq('id',id);
+    if(!confirm('Tem certeza que deseja excluir este lançamento de exames? Essa ação não poderá ser desfeita.')) return;
+    const item=records.find(r=>r.id===id);
+    const {error}=await supabase.from('exams').delete().in('id',item?.db_ids||[id]);
     if(error) return alert('Não foi possível excluir. Verifique as permissões do seu usuário no Supabase.');
     await loadAll();
   };
   const delSurgery = async id=>{
-    if(!confirm('Tem certeza que deseja excluir esta cirurgia? Essa ação não poderá ser desfeita.')) return;
-    const {error}=await supabase.from('surgeries').delete().eq('id',id);
+    if(!confirm('Tem certeza que deseja excluir este lançamento cirúrgico? Essa ação não poderá ser desfeita.')) return;
+    const item=surgeries.find(r=>r.id===id);
+    const {error}=await supabase.from('surgeries').delete().in('id',item?.db_ids||[id]);
     if(error) return alert('Não foi possível excluir. Verifique as permissões do seu usuário no Supabase.');
     await loadAll();
   };
@@ -496,14 +556,52 @@ function App(){
   const filteredExams = useMemo(()=>records.filter(r=>
     (!filterMonth||r.date.startsWith(filterMonth)) &&
     (!filterDoctor||r.doctor_id===filterDoctor) &&
-    (!filterExam||r.exam_type_id===filterExam)
+    (!filterExam||r.exam_type_ids?.includes(filterExam))
   ),[records,filterMonth,filterDoctor,filterExam]);
 
   const filteredSurgeries = useMemo(()=>surgeries.filter(r=>
     (!sMonth||r.date.startsWith(sMonth)) &&
     (!sDoctor||r.doctor_id===sDoctor) &&
-    (!sProcedure||r.procedure_id===sProcedure)
+    (!sProcedure||r.procedure_ids?.includes(sProcedure))
   ),[surgeries,sMonth,sDoctor,sProcedure]);
+
+  const deleteFilteredExams = async ()=>{
+    if(!filteredExams.length) return alert('Nenhum exame encontrado com os filtros atuais.');
+
+    const message = `Você está prestes a excluir ${filteredExams.length} lançamento(s) de exames exibidos pelos filtros atuais. Essa ação não poderá ser desfeita. Deseja continuar?`;
+    if(!confirm(message)) return;
+
+    const ids = [...new Set(filteredExams.flatMap(item=>item.db_ids||[]))];
+    if(!ids.length) return alert('Não foi possível identificar os exames para exclusão.');
+
+    const {error}=await supabase.from('exams').delete().in('id',ids);
+    if(error){
+      console.error(error);
+      return alert('Não foi possível excluir os exames filtrados.');
+    }
+
+    await loadAll();
+    alert('Exames filtrados excluídos com sucesso.');
+  };
+
+  const deleteFilteredSurgeries = async ()=>{
+    if(!filteredSurgeries.length) return alert('Nenhuma cirurgia encontrada com os filtros atuais.');
+
+    const message = `Você está prestes a excluir ${filteredSurgeries.length} lançamento(s) de cirurgias exibidos pelos filtros atuais. Essa ação não poderá ser desfeita. Deseja continuar?`;
+    if(!confirm(message)) return;
+
+    const ids = [...new Set(filteredSurgeries.flatMap(item=>item.db_ids||[]))];
+    if(!ids.length) return alert('Não foi possível identificar as cirurgias para exclusão.');
+
+    const {error}=await supabase.from('surgeries').delete().in('id',ids);
+    if(error){
+      console.error(error);
+      return alert('Não foi possível excluir as cirurgias filtradas.');
+    }
+
+    await loadAll();
+    alert('Cirurgias filtradas excluídas com sucesso.');
+  };
 
   const dashboardExams = useMemo(()=>records.filter(r=>
     (!dashMonth||r.date.startsWith(dashMonth)) &&
@@ -534,8 +632,8 @@ function App(){
     const totalEx=dashboardExams.length,totalSu=dashboardSurgeries.length;
     const realEx=dashboardExams.filter(x=>x.status==='Realizado').length;
     const realSu=dashboardSurgeries.filter(x=>x.status==='Realizada').length;
-    const examTop=Object.entries(countBy(dashboardExams,'exam')).sort((a,b)=>b[1]-a[1])[0];
-    const surgTop=Object.entries(countBy(dashboardSurgeries,'procedure')).sort((a,b)=>b[1]-a[1])[0];
+    const examTop=Object.entries(countManyBy(dashboardExams,'exam_names')).sort((a,b)=>b[1]-a[1])[0];
+    const surgTop=Object.entries(countManyBy(dashboardSurgeries,'procedure_names')).sort((a,b)=>b[1]-a[1])[0];
     const doctorTop=Object.entries(countBy([...dashboardExams,...dashboardSurgeries],'doctor')).sort((a,b)=>b[1]-a[1])[0];
     const uniquePatients=new Set([...dashboardExams,...dashboardSurgeries].map(x=>`${x.patient}|${normalizePhone(x.whatsapp)}`)).size;
     return {totalEx,totalSu,realEx,realSu,examTop,surgTop,doctorTop,uniquePatients,
@@ -855,9 +953,9 @@ function App(){
     wsCharts.getCell('A3').alignment={vertical:'middle'};
 
     const charts=[
-      ['Exames por tipo',countBy(dashboardExams,'exam'),'A5:F20'],
+      ['Exames por tipo',countManyBy(dashboardExams,'exam_names'),'A5:F20'],
       ['Exames por médico',countBy(dashboardExams,'doctor'),'G5:L20'],
-      ['Cirurgias por procedimento',countBy(dashboardSurgeries,'procedure'),'A22:F37'],
+      ['Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),'A22:F37'],
       ['Lançamentos por responsável',Object.fromEntries(userRows.map(u=>[u.name,u.exams+u.surgeries])),'G22:L37']
     ];
 
@@ -1053,7 +1151,15 @@ function App(){
             <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth(monthNow);setFilterDoctor('');setFilterExam('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
+            <button
+              className="btn btn-danger-soft bulk-delete-btn"
+              onClick={deleteFilteredExams}
+              disabled={!filteredExams.length}
+              title="Excluir todos os lançamentos exibidos pelos filtros atuais"
+            >
+              🗑 Excluir filtrados ({filteredExams.length})
+            </button>
           </div>
           <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Médico</th><th>Exame</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredExams.length?filteredExams.map(r=><tr key={r.id}>
@@ -1072,7 +1178,7 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_id:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={filteredSurgeries.filter(x=>x.status==='Agendada').length}/><Kpi label="Autorizadas" value={filteredSurgeries.filter(x=>x.status==='Autorizada').length}/><Kpi label="Realizadas" value={filteredSurgeries.filter(x=>x.status==='Realizada').length}/></div>
@@ -1081,7 +1187,15 @@ function App(){
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
             <Select value={sProcedure} setValue={setSProcedure} options={procedures} first="Todos os procedimentos"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth(monthNow);setSDoctor('');setSProcedure('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSProcedure('')}}>Limpar</button>
+            <button
+              className="btn btn-danger-soft bulk-delete-btn"
+              onClick={deleteFilteredSurgeries}
+              disabled={!filteredSurgeries.length}
+              title="Excluir todos os lançamentos exibidos pelos filtros atuais"
+            >
+              🗑 Excluir filtrados ({filteredSurgeries.length})
+            </button>
           </div>
           <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Cirurgião</th><th>Procedimento</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredSurgeries.length?filteredSurgeries.map(r=><tr key={r.id}>
@@ -1134,7 +1248,7 @@ function App(){
         <div className="results-section">
           <div className="results-section-title"><div><h3>Análise de exames</h3><p>Distribuição dos exames no período selecionado.</p></div><div className="pill">{resultSummary.totalEx} exames</div></div>
           <div className="grid">
-            <div className="card chart-card"><h2>Exames por tipo</h2><Bars data={countBy(dashboardExams,'exam')}/></div>
+            <div className="card chart-card"><h2>Exames por tipo</h2><Bars data={countManyBy(dashboardExams,'exam_names')}/></div>
             <div className="card chart-card"><h2>Exames por médico</h2><Bars data={countBy(dashboardExams,'doctor')}/></div>
           </div>
           <div className="grid">
@@ -1146,7 +1260,7 @@ function App(){
         <div className="results-section">
           <div className="results-section-title"><div><h3>Análise de cirurgias</h3><p>Produção, procedimentos, status e convênios.</p></div><div className="pill">{resultSummary.totalSu} cirurgias</div></div>
           <div className="grid">
-            <div className="card chart-card"><h2>Cirurgias por procedimento</h2><Bars data={countBy(dashboardSurgeries,'procedure')}/></div>
+            <div className="card chart-card"><h2>Cirurgias por procedimento</h2><Bars data={countManyBy(dashboardSurgeries,'procedure_names')}/></div>
             <div className="card chart-card"><h2>Cirurgias por cirurgião</h2><Bars data={countBy(dashboardSurgeries,'doctor')}/></div>
           </div>
           <div className="grid">
@@ -1257,14 +1371,14 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">03</div>
             <h3>Lançar um exame</h3>
-            <p>Acesse <b>Exames → Novo exame</b>. Preencha data, paciente, WhatsApp, médico, tipo de exame, status e observação. Depois clique em <b>Salvar exame</b>.</p>
+            <p>Acesse <b>Exames → Novo exame</b>. Preencha data, paciente, WhatsApp, médico, tipo de exame, status e observação. Você pode selecionar vários exames no mesmo lançamento. Depois clique em <b>Salvar exame</b>.</p>
             <div className="manual-note">Use o campo Observação para registrar informações importantes que a equipe precise consultar depois.</div>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">04</div>
             <h3>Lançar uma cirurgia</h3>
-            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe paciente, cirurgião, procedimento, olho, convênio, status, horários, pagamento e observações.</p>
+            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe paciente, cirurgião e selecione um ou vários procedimentos no mesmo lançamento. Depois complete olho, convênio, status, horários, pagamento e observações.</p>
             <div className="manual-note">Mantenha o status atualizado para que os indicadores mensais representem a situação real da cirurgia.</div>
           </article>
 
@@ -1345,6 +1459,28 @@ function App(){
       .exam-option input{width:auto;margin:0;accent-color:#315f72}
       @media(max-width:700px){.exam-options{grid-template-columns:1fr}}
     `}</style>
+    <style>{`
+      .bulk-delete-btn{
+        white-space:nowrap;
+        border-color:#efd0d0!important;
+        background:#fff5f5!important;
+        color:#a84f4f!important;
+      }
+      .bulk-delete-btn:hover:not(:disabled){
+        background:#fbe9e9!important;
+        border-color:#e4bcbc!important;
+      }
+      .bulk-delete-btn:disabled{
+        opacity:.45;
+        cursor:not-allowed;
+      }
+      @media(max-width:900px){
+        .filters .bulk-delete-btn{
+          width:100%;
+        }
+      }
+    `}</style>
+
     <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle={`Lançado por: ${currentAccessName}. Esse campo é preenchido automaticamente.`} onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
@@ -1354,19 +1490,16 @@ function App(){
         <Field label={editingExamId ? "Exame" : "Exames"} full>
           <div className="exam-multi-select">
             <div className="exam-multi-head">
-              <span>{editingExamId ? 'Selecione o exame' : 'Selecione um ou vários exames'}</span>
-              {!editingExamId&&<b>{examForm.exam_type_ids?.length||0} selecionado(s)</b>}
+              <span>Selecione um ou vários exames para este lançamento</span>
+              <b>{examForm.exam_type_ids?.length||0} selecionado(s)</b>
             </div>
             <div className="exam-options">
               {examTypes.map(exam=>{
                 const checked=examForm.exam_type_ids?.includes(exam.id);
                 return <label key={exam.id} className={`exam-option ${checked?'selected':''}`}>
                   <input type="checkbox" checked={checked} onChange={()=>{
-                    if(editingExamId) setExamForm({...examForm,exam_type_ids:[exam.id]});
-                    else {
-                      const ids=examForm.exam_type_ids||[];
-                      setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id]});
-                    }
+                    const ids=examForm.exam_type_ids||[];
+                    setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id]});
                   }}/>
                   <span>{exam.name}</span>
                 </label>;
@@ -1380,13 +1513,96 @@ function App(){
       </div>
     </Modal>
 
+    <style>{`
+      .procedure-multi-select{
+        border:1px solid #e3e9ed;
+        border-radius:12px;
+        padding:12px;
+        background:#fbfcfd;
+      }
+      .procedure-multi-head{
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        gap:12px;
+        margin-bottom:10px;
+        color:#53636e;
+        font-size:13px;
+      }
+      .procedure-multi-head b{
+        color:#315f72;
+      }
+      .procedure-options{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:8px;
+        max-height:250px;
+        overflow:auto;
+      }
+      .procedure-option{
+        display:flex!important;
+        align-items:center;
+        gap:9px;
+        margin:0!important;
+        padding:10px 11px;
+        border:1px solid #e3e9ed;
+        border-radius:9px;
+        background:#fff;
+        cursor:pointer;
+      }
+      .procedure-option.selected{
+        border-color:#477f91;
+        background:#eaf2f5;
+        color:#315f72;
+        font-weight:700;
+      }
+      .procedure-option input{
+        width:auto;
+        margin:0;
+        accent-color:#315f72;
+      }
+      @media(max-width:700px){
+        .procedure-options{grid-template-columns:1fr}
+      }
+    `}</style>
+
     <Modal open={surgeryModal} onClose={closeSurgeryModal} title={editingSurgeryId?'Editar cirurgia':'Nova cirurgia'} subtitle={`Lançado por: ${currentAccessName}. Esse campo é preenchido automaticamente.`} onSave={editingSurgeryId?updateSurgery:addSurgery} saveText={editingSurgeryId?'Salvar alterações':'Salvar cirurgia'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
         <Field label="WhatsApp"><input value={sForm.whatsapp} onChange={e=>setSForm({...sForm,whatsapp:e.target.value})}/></Field>
         <Field label="Cirurgião"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
-        <Field label="Procedimento"><Select value={sForm.procedure_id} setValue={v=>setSForm({...sForm,procedure_id:v})} options={procedures} first="Selecione"/></Field>
+        <Field label={editingSurgeryId ? "Procedimento" : "Procedimentos"} full>
+          <div className="procedure-multi-select">
+            <div className="procedure-multi-head">
+              <span>Selecione um ou vários procedimentos para este lançamento</span>
+              <b>{sForm.procedure_ids?.length||0} selecionado(s)</b>
+            </div>
+
+            <div className="procedure-options">
+              {procedures.map(procedure=>{
+                const checked=sForm.procedure_ids?.includes(procedure.id);
+
+                return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={()=>{
+                      const ids=sForm.procedure_ids||[];
+                      setSForm({
+                        ...sForm,
+                        procedure_ids:checked
+                          ? ids.filter(id=>id!==procedure.id)
+                          : [...ids,procedure.id]
+                      });
+                    }}
+                  />
+                  <span>{procedure.name}</span>
+                </label>;
+              })}
+            </div>
+          </div>
+        </Field>
         <Field label="Olho"><Select value={sForm.eye} setValue={v=>setSForm({...sForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
         <Field label="Convênio"><Select value={sForm.insurance_id} setValue={v=>setSForm({...sForm,insurance_id:v})} options={insurances} first="Particular / selecione"/></Field>
         <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Aguardando autorização','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
