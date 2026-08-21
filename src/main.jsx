@@ -162,7 +162,7 @@ function App(){
   const [dashStatus,setDashStatus] = useState('');
 
   const [examForm,setExamForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_id:'',status:'Agendado',obs:''
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''
   });
   const [sForm,setSForm] = useState({
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_id:'',eye:'Não se aplica',
@@ -296,25 +296,22 @@ function App(){
 
   const addExam = async ()=>{
     if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
-    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_id)
-      return alert('Preencha data, paciente, médico e exame.');
+    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
+      return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
     try{
       const patient_id=await getOrCreatePatient(examForm.patient,examForm.whatsapp);
-      const {error}=await supabase.from('exams').insert({
-        exam_date:examForm.date,
-        patient_id,
-        doctor_id:examForm.doctor_id,
-        exam_type_id:examForm.exam_type_id,
-        status:examForm.status,
-        observation:examForm.obs||null,
-        launched_by:session.user.id,
+      const rows=examForm.exam_type_ids.map(examTypeId=>({
+        exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
+        exam_type_id:examTypeId, status:examForm.status,
+        observation:examForm.obs||null, launched_by:session.user.id,
         launched_by_name:currentLaunchName
-      });
+      }));
+      const {error}=await supabase.from('exams').insert(rows);
       if(error) throw error;
       setExamModal(false);
-      setExamForm({...examForm,patient:'',whatsapp:'',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
       await loadAll();
-    }catch(e){ console.error(e); alert('Não foi possível salvar o exame.'); }
+    }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
 
   const addSurgery = async ()=>{
@@ -353,7 +350,7 @@ function App(){
       patient:r.patient,
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
-      exam_type_id:r.exam_type_id,
+      exam_type_ids:[r.exam_type_id],
       status:r.status,
       obs:r.obs || ''
     });
@@ -392,7 +389,7 @@ function App(){
     const original = records.find(r=>r.id===editingExamId);
     if(!original) return;
     if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
-    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_id)
+    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
       return alert('Preencha data, paciente, médico e exame.');
 
     try{
@@ -401,7 +398,7 @@ function App(){
       const {error}=await supabase.from('exams').update({
         exam_date:examForm.date,
         doctor_id:examForm.doctor_id,
-        exam_type_id:examForm.exam_type_id,
+        exam_type_id:examForm.exam_type_ids[0],
         status:examForm.status,
         observation:examForm.obs||null,
         launched_by:session.user.id,
@@ -412,7 +409,7 @@ function App(){
 
       setExamModal(false);
       setEditingExamId(null);
-      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_id:'',status:'Agendado',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -460,7 +457,7 @@ function App(){
   const closeExamModal = ()=>{
     setExamModal(false);
     setEditingExamId(null);
-    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_id:'',status:'Agendado',obs:''});
+    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
   };
 
   const closeSurgeryModal = ()=>{
@@ -1042,7 +1039,7 @@ function App(){
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_id:'',status:'Agendado',obs:''});setExamModal(true)}}>+ Novo exame</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});setExamModal(true)}}>+ Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -1338,13 +1335,45 @@ function App(){
 
     </main>
 
+    <style>{`
+      .exam-multi-select{border:1px solid #e3e9ed;border-radius:12px;padding:12px;background:#fbfcfd}
+      .exam-multi-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px;color:#53636e;font-size:13px}
+      .exam-multi-head b{color:#315f72}
+      .exam-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:240px;overflow:auto}
+      .exam-option{display:flex!important;align-items:center;gap:9px;border:1px solid #e3e9ed;border-radius:9px;padding:10px 11px;background:#fff;cursor:pointer;margin:0!important}
+      .exam-option.selected{border-color:#477f91;background:#eaf2f5;color:#315f72;font-weight:700}
+      .exam-option input{width:auto;margin:0;accent-color:#315f72}
+      @media(max-width:700px){.exam-options{grid-template-columns:1fr}}
+    `}</style>
     <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle={`Lançado por: ${currentAccessName}. Esse campo é preenchido automaticamente.`} onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
         <Field label="WhatsApp"><input value={examForm.whatsapp} onChange={e=>setExamForm({...examForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
         <Field label="Médico"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
-        <Field label="Exame"><Select value={examForm.exam_type_id} setValue={v=>setExamForm({...examForm,exam_type_id:v})} options={examTypes} first="Selecione"/></Field>
+        <Field label={editingExamId ? "Exame" : "Exames"} full>
+          <div className="exam-multi-select">
+            <div className="exam-multi-head">
+              <span>{editingExamId ? 'Selecione o exame' : 'Selecione um ou vários exames'}</span>
+              {!editingExamId&&<b>{examForm.exam_type_ids?.length||0} selecionado(s)</b>}
+            </div>
+            <div className="exam-options">
+              {examTypes.map(exam=>{
+                const checked=examForm.exam_type_ids?.includes(exam.id);
+                return <label key={exam.id} className={`exam-option ${checked?'selected':''}`}>
+                  <input type="checkbox" checked={checked} onChange={()=>{
+                    if(editingExamId) setExamForm({...examForm,exam_type_ids:[exam.id]});
+                    else {
+                      const ids=examForm.exam_type_ids||[];
+                      setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id]});
+                    }
+                  }}/>
+                  <span>{exam.name}</span>
+                </label>;
+              })}
+            </div>
+          </div>
+        </Field>
         <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Realizado','Cancelado']}/></Field>
         <Field label="Lançado por"><input value={currentAccessName} readOnly /></Field>
         <Field label="Observação" full><textarea value={examForm.obs} onChange={e=>setExamForm({...examForm,obs:e.target.value})} rows="4"/></Field>
