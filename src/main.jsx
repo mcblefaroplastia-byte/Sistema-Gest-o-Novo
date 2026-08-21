@@ -37,6 +37,10 @@ const countManyBy = (arr, key) => arr.reduce((o, x) => {
   return o;
 }, {});
 
+const totalItems = (arr, key) => arr.reduce((total, item) => total + (Array.isArray(item[key]) ? item[key].length : 0), 0);
+const totalItemsByStatus = (arr, key, status) => arr.reduce((total, item) =>
+  total + (item.status === status && Array.isArray(item[key]) ? item[key].length : 0), 0);
+
 const groupLaunchRows = (rows, kind) => {
   const groups = new Map();
 
@@ -622,16 +626,17 @@ function App(){
   const userRows = ['Juliana','Luiza','Elisangela','ADM'].map(name=>({
     key:name,
     name,
-    exams:dashboardExams.filter(x=>launchedName(x)===name).length,
-    surgeries:dashboardSurgeries.filter(x=>launchedName(x)===name).length
+    exams:totalItems(dashboardExams.filter(x=>launchedName(x)===name),'exam_type_ids'),
+    surgeries:totalItems(dashboardSurgeries.filter(x=>launchedName(x)===name),'procedure_ids')
   }));
 
   const currentAccessName = currentLaunchName || 'Selecione quem está lançando';
 
   const resultSummary=useMemo(()=>{
-    const totalEx=dashboardExams.length,totalSu=dashboardSurgeries.length;
-    const realEx=dashboardExams.filter(x=>x.status==='Realizado').length;
-    const realSu=dashboardSurgeries.filter(x=>x.status==='Realizada').length;
+    const totalEx=totalItems(dashboardExams,'exam_type_ids');
+    const totalSu=totalItems(dashboardSurgeries,'procedure_ids');
+    const realEx=totalItemsByStatus(dashboardExams,'exam_type_ids','Realizado');
+    const realSu=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Realizada');
     const examTop=Object.entries(countManyBy(dashboardExams,'exam_names')).sort((a,b)=>b[1]-a[1])[0];
     const surgTop=Object.entries(countManyBy(dashboardSurgeries,'procedure_names')).sort((a,b)=>b[1]-a[1])[0];
     const doctorTop=Object.entries(countBy([...dashboardExams,...dashboardSurgeries],'doctor')).sort((a,b)=>b[1]-a[1])[0];
@@ -695,7 +700,7 @@ function App(){
       const s = String(status || '').toLowerCase();
       if(s.includes('realiz')) return {fill:COLORS.greenSoft,font:COLORS.green};
       if(s.includes('cancel')) return {fill:COLORS.redSoft,font:COLORS.red};
-      if(s.includes('autoriz') || s.includes('aguard')) return {fill:COLORS.yellowSoft,font:COLORS.yellow};
+      if(s.includes('autoriz') || s.includes('pendent')) return {fill:COLORS.yellowSoft,font:COLORS.yellow};
       return {fill:COLORS.primarySoft,font:COLORS.primary};
     };
 
@@ -1141,10 +1146,10 @@ function App(){
           </div>
         </div>
         <div className="kpis">
-          <Kpi label="Exames no mês" value={filteredExams.length}/>
-          <Kpi label="Agendados" value={filteredExams.filter(x=>x.status==='Agendado').length}/>
-          <Kpi label="Realizados" value={filteredExams.filter(x=>x.status==='Realizado').length}/>
-          <Kpi label="Cancelados" value={filteredExams.filter(x=>x.status==='Cancelado').length}/>
+          <Kpi label="Exames no mês" value={totalItems(filteredExams,'exam_type_ids')}/>
+          <Kpi label="Agendados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Agendado')}/>
+          <Kpi label="Realizados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Realizado')}/>
+          <Kpi label="Cancelados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Cancelado')}/>
         </div>
         <div className="card">
           <div className="filters">
@@ -1181,7 +1186,7 @@ function App(){
             <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
-        <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={filteredSurgeries.filter(x=>x.status==='Agendada').length}/><Kpi label="Autorizadas" value={filteredSurgeries.filter(x=>x.status==='Autorizada').length}/><Kpi label="Realizadas" value={filteredSurgeries.filter(x=>x.status==='Realizada').length}/></div>
+        <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={filteredSurgeries.filter(x=>x.status==='Agendada').length}/><Kpi label="Autorizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Autorizada')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
         <div className="card">
           <div className="filters">
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
@@ -1227,7 +1232,7 @@ function App(){
             <input type="month" value={dashMonth} onChange={e=>setDashMonth(e.target.value)}/>
             <Select value={dashDoctor} setValue={setDashDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={dashUser} setValue={setDashUser} options={['Juliana','Luiza','Elisangela','ADM']} first="Todos os responsáveis"/>
-            <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Aguardando autorização','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
+            <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
           </div>
           <div className="active-period">Período analisado: <b>{monthLabel(dashMonth)}</b></div>
         </div>
@@ -1605,7 +1610,7 @@ function App(){
         </Field>
         <Field label="Olho"><Select value={sForm.eye} setValue={v=>setSForm({...sForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
         <Field label="Convênio"><Select value={sForm.insurance_id} setValue={v=>setSForm({...sForm,insurance_id:v})} options={insurances} first="Particular / selecione"/></Field>
-        <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Aguardando autorização','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
+        <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
         <Field label="Lançado por"><input value={currentAccessName} readOnly /></Field>
         <Field label="Horário de chegada"><input type="time" value={sForm.arrival} onChange={e=>setSForm({...sForm,arrival:e.target.value})}/></Field>
         <Field label="Horário da cirurgia"><input type="time" value={sForm.time} onChange={e=>setSForm({...sForm,time:e.target.value})}/></Field>
