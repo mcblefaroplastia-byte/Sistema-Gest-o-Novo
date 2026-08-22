@@ -145,6 +145,13 @@ function ObservationCell({text}) {
   return text ? <div className="obs-cell" title={text}>{text}</div> : <span className="muted">—</span>;
 }
 function Kpi({label,value}){return <div className="kpi"><small>{label}</small><strong>{value}</strong></div>;}
+
+const statusClass = status => String(status||'')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase()
+  .replace(/\s+/g,'-');
+
 function Select({value,setValue,options,first}) {
   return <select value={value} onChange={e=>setValue(e.target.value)}>
     {first&&<option value="">{first}</option>}
@@ -231,11 +238,11 @@ function App(){
   const [dashStatus,setDashStatus] = useState('');
 
   const [examForm,setExamForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
   });
   const [sForm,setSForm] = useState({
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',
-    insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''
+    insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:''
   });
 
   useEffect(()=>{
@@ -254,10 +261,14 @@ function App(){
   },[session?.user?.id]);
 
   const launcherOptions = ['Juliana','Luiza','Elisangela'];
+  const launcherOptionsAll = ['Juliana','Luiza','Elisangela','ADM'];
 
   const currentLaunchName = profile?.role === 'admin'
     ? 'ADM'
     : launcherName;
+
+  const examLaunchName = examForm.launcher || currentLaunchName;
+  const surgeryLaunchName = sForm.launcher || currentLaunchName;
 
   const selectLauncher = name => {
     setLauncherName(name);
@@ -329,7 +340,7 @@ function App(){
   };
 
   const addExam = async ()=>{
-    if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
+    if(!examLaunchName) return alert('Selecione quem está fazendo o lançamento.');
     if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
       return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
     try{
@@ -340,18 +351,18 @@ function App(){
         exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
         exam_type_id:examTypeId, status:examForm.status,
         observation:examForm.obs||null, launched_by:session.user.id,
-        launched_by_name:currentLaunchName
+        launched_by_name:examLaunchName
       }));
       const {error}=await supabase.from('exams').insert(rows);
       if(error) throw error;
       setExamModal(false);
-      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
       await loadAll();
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
 
   const addSurgery = async ()=>{
-    if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
+    if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
     if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
       return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
 
@@ -373,7 +384,7 @@ function App(){
         payment_status:sForm.payment,
         observation:sForm.obs||null,
         launched_by:session.user.id,
-        launched_by_name:currentLaunchName
+        launched_by_name:surgeryLaunchName
       }));
 
       const {error}=await supabase.from('surgeries').insert(rows);
@@ -383,7 +394,7 @@ function App(){
       setSForm({
         date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],
         eye:'Não se aplica',insurance_id:'',status:'Solicitação',
-        arrival:'',time:'',payment:'Não informado',obs:''
+        arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''
       });
       await loadAll();
     }catch(e){
@@ -402,6 +413,7 @@ function App(){
       doctor_id:r.doctor_id,
       exam_type_ids:r.exam_type_ids||[],
       status:r.status,
+      launcher:r.launchedByName || currentLaunchName || '',
       obs:r.obs || ''
     });
     setExamModal(true);
@@ -421,6 +433,7 @@ function App(){
       arrival:r.arrival || '',
       time:r.time || '',
       payment:r.payment || 'Não informado',
+      launcher:r.launchedByName || currentLaunchName || '',
       obs:r.obs || ''
     });
     setSurgeryModal(true);
@@ -438,7 +451,7 @@ function App(){
   const updateExam = async ()=>{
     const original = records.find(r=>r.id===editingExamId);
     if(!original) return;
-    if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
+    if(!examLaunchName) return alert('Selecione quem está fazendo o lançamento.');
     if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
       return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
 
@@ -457,7 +470,7 @@ function App(){
         status:examForm.status,
         observation:examForm.obs||null,
         launched_by:session.user.id,
-        launched_by_name:currentLaunchName
+        launched_by_name:examLaunchName
       }));
 
       const {error}=await supabase.from('exams').insert(rows);
@@ -465,7 +478,7 @@ function App(){
 
       setExamModal(false);
       setEditingExamId(null);
-      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -476,7 +489,7 @@ function App(){
   const updateSurgery = async ()=>{
     const original = surgeries.find(r=>r.id===editingSurgeryId);
     if(!original) return;
-    if(profile?.role!=='admin' && !launcherName) return alert('Selecione quem está fazendo o lançamento: Juliana, Luiza ou Elisangela.');
+    if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
     if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
       return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
 
@@ -500,7 +513,7 @@ function App(){
         payment_status:sForm.payment,
         observation:sForm.obs||null,
         launched_by:session.user.id,
-        launched_by_name:currentLaunchName
+        launched_by_name:surgeryLaunchName
       }));
 
       const {error}=await supabase.from('surgeries').insert(rows);
@@ -508,7 +521,7 @@ function App(){
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
+      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -519,13 +532,13 @@ function App(){
   const closeExamModal = ()=>{
     setExamModal(false);
     setEditingExamId(null);
-    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});
+    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
   };
 
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});
+    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
   };
 
   const delExam = async id=>{
@@ -1142,7 +1155,7 @@ function App(){
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',obs:''});setExamModal(true)}}>+ Novo exame</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});setExamModal(true)}}>+ Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -1169,7 +1182,7 @@ function App(){
           <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Médico</th><th>Exame</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredExams.length?filteredExams.map(r=><tr key={r.id}>
             <td>{brDate(r.date)}</td><td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
-            <td>{r.doctor}</td><td>{r.exam}</td><td><span className={`status ${r.status.toLowerCase()}`}>{r.status}</span></td>
+            <td>{r.doctor}</td><td>{r.exam}</td><td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
             <td><div className="row-actions">
               <button className="btn btn-edit-soft" onClick={()=>openEditExam(r)}>Editar</button>
@@ -1183,7 +1196,7 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={filteredSurgeries.filter(x=>x.status==='Agendada').length}/><Kpi label="Autorizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Autorizada')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
@@ -1206,7 +1219,7 @@ function App(){
           <tbody>{filteredSurgeries.length?filteredSurgeries.map(r=><tr key={r.id}>
             <td>{brDate(r.date)}{r.time&&<><br/><small>{r.time}</small></>}</td><td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
             <td>{r.doctor}</td><td>{r.procedure}</td><td>{r.eye}</td><td>{r.insurance}</td>
-            <td><span className={`status ${String(r.status).toLowerCase().replaceAll(' ','-')}`}>{r.status}</span></td>
+            <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
             <td><div className="row-actions">
               <button className="btn btn-edit-soft" onClick={()=>openEditSurgery(r)}>Editar</button>
@@ -1486,7 +1499,7 @@ function App(){
       }
     `}</style>
 
-    <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle={`Lançado por: ${currentAccessName}. Esse campo é preenchido automaticamente.`} onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
+    <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle="Selecione quem está fazendo este lançamento."  onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
@@ -1513,10 +1526,25 @@ function App(){
           </div>
         </Field>
         <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Realizado','Cancelado']}/></Field>
-        <Field label="Lançado por"><input value={currentAccessName} readOnly /></Field>
+        <Field label="Lançado por">
+          <Select
+            value={examForm.launcher || currentLaunchName || ''}
+            setValue={v=>setExamForm({...examForm,launcher:v})}
+            options={launcherOptionsAll}
+            first="Selecione quem lançou"
+          />
+        </Field>
         <Field label="Observação" full><textarea value={examForm.obs} onChange={e=>setExamForm({...examForm,obs:e.target.value})} rows="4"/></Field>
       </div>
     </Modal>
+
+    <style>{`
+      .status.pendente{
+        background:#fff3cd!important;
+        color:#8a6518!important;
+        border:1px solid #f0d98a!important;
+      }
+    `}</style>
 
     <style>{`
       .procedure-multi-select{
@@ -1571,7 +1599,7 @@ function App(){
       }
     `}</style>
 
-    <Modal open={surgeryModal} onClose={closeSurgeryModal} title={editingSurgeryId?'Editar cirurgia':'Nova cirurgia'} subtitle={`Lançado por: ${currentAccessName}. Esse campo é preenchido automaticamente.`} onSave={editingSurgeryId?updateSurgery:addSurgery} saveText={editingSurgeryId?'Salvar alterações':'Salvar cirurgia'}>
+    <Modal open={surgeryModal} onClose={closeSurgeryModal} title={editingSurgeryId?'Editar cirurgia':'Nova cirurgia'} subtitle="Selecione quem está fazendo este lançamento."  onSave={editingSurgeryId?updateSurgery:addSurgery} saveText={editingSurgeryId?'Salvar alterações':'Salvar cirurgia'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
@@ -1611,7 +1639,14 @@ function App(){
         <Field label="Olho"><Select value={sForm.eye} setValue={v=>setSForm({...sForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
         <Field label="Convênio"><Select value={sForm.insurance_id} setValue={v=>setSForm({...sForm,insurance_id:v})} options={insurances} first="Particular / selecione"/></Field>
         <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-        <Field label="Lançado por"><input value={currentAccessName} readOnly /></Field>
+        <Field label="Lançado por">
+          <Select
+            value={sForm.launcher || currentLaunchName || ''}
+            setValue={v=>setSForm({...sForm,launcher:v})}
+            options={launcherOptionsAll}
+            first="Selecione quem lançou"
+          />
+        </Field>
         <Field label="Horário de chegada"><input type="time" value={sForm.arrival} onChange={e=>setSForm({...sForm,arrival:e.target.value})}/></Field>
         <Field label="Horário da cirurgia"><input type="time" value={sForm.time} onChange={e=>setSForm({...sForm,time:e.target.value})}/></Field>
         <Field label="Pagamento"><Select value={sForm.payment} setValue={v=>setSForm({...sForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
