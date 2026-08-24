@@ -1525,7 +1525,7 @@ function App(){
             </div>
           </div>
         </Field>
-        <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Realizado','Cancelado']}/></Field>
+        <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Pendente','Realizado','Cancelado']}/></Field>
         <Field label="Lançado por">
           <Select
             value={examForm.launcher || currentLaunchName || ''}
