@@ -1161,6 +1161,7 @@ function App(){
         <div className="kpis">
           <Kpi label="Exames no mês" value={totalItems(filteredExams,'exam_type_ids')}/>
           <Kpi label="Agendados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Agendado')}/>
+          <Kpi label="Pendentes" value={totalItemsByStatus(filteredExams,'exam_type_ids','Pendente')}/>
           <Kpi label="Realizados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Realizado')}/>
           <Kpi label="Cancelados" value={totalItemsByStatus(filteredExams,'exam_type_ids','Cancelado')}/>
         </div>
