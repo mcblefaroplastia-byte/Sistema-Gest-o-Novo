@@ -1200,7 +1200,7 @@ function App(){
             <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
-        <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={filteredSurgeries.filter(x=>x.status==='Agendada').length}/><Kpi label="Autorizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Autorizada')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
+        <div className="kpis"><Kpi label="Cirurgias no período" value={totalItems(filteredSurgeries,'procedure_ids')}/><Kpi label="Agendadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Agendada')}/><Kpi label="Pendentes" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Pendente')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
         <div className="card">
           <div className="filters">
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
