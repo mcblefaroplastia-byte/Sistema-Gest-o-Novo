@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import ExcelJS from 'exceljs';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import { supabase } from './supabase';
 import './styles.css';
 
@@ -236,6 +238,10 @@ function App(){
   const [dashDoctor,setDashDoctor] = useState('');
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
+  const [exportingPdf,setExportingPdf] = useState(false);
+  const pdfPage1Ref = useRef(null);
+  const pdfPage2Ref = useRef(null);
+  const pdfPage3Ref = useRef(null);
 
   const [examForm,setExamForm] = useState({
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
@@ -806,7 +812,7 @@ function App(){
     // =========================
     // RESUMO EXECUTIVO
     // =========================
-    const wsSummary = workbook.addWorksheet('Resumo Executivo',{
+    const wsSummary = workbook.addWorksheet('Resultados',{
       views:[{showGridLines:false}]
     });
 
@@ -971,10 +977,14 @@ function App(){
     wsCharts.getCell('A3').alignment={vertical:'middle'};
 
     const charts=[
-      ['Exames por tipo',countManyBy(dashboardExams,'exam_names'),'A5:F20'],
-      ['Exames por médico',countBy(dashboardExams,'doctor'),'G5:L20'],
-      ['Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),'A22:F37'],
-      ['Lançamentos por responsável',Object.fromEntries(userRows.map(u=>[u.name,u.exams+u.surgeries])),'G22:L37']
+      ['Exames por tipo',countManyBy(dashboardExams,'exam_names'),'A5:F18'],
+      ['Exames por médico',countBy(dashboardExams,'doctor'),'G5:L18'],
+      ['Status dos exames',countBy(dashboardExams,'status'),'A20:F33'],
+      ['Exames por responsável',countBy(dashboardExams.map(x=>({...x,launcher:launchedName(x)})),'launcher'),'G20:L33'],
+      ['Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),'A35:F48'],
+      ['Cirurgias por cirurgião',countBy(dashboardSurgeries,'doctor'),'G35:L48'],
+      ['Status das cirurgias',countBy(dashboardSurgeries,'status'),'A50:F63'],
+      ['Cirurgias por convênio',countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel'),'G50:L63']
     ];
 
     for(const [title,data,range] of charts){
@@ -985,19 +995,19 @@ function App(){
                                  br:{col:wsCharts.getCell(to).col,row:wsCharts.getCell(to).row}});
     }
 
-    wsCharts.mergeCells('A39:L39');
-    wsCharts.getCell('A39').value='Leitura rápida';
-    styleSection(wsCharts.getCell('A39'));
-    wsCharts.mergeCells('A40:L43');
-    wsCharts.getCell('A40').value =
+    wsCharts.mergeCells('A65:L65');
+    wsCharts.getCell('A65').value='Leitura rápida';
+    styleSection(wsCharts.getCell('A65'));
+    wsCharts.mergeCells('A66:L69');
+    wsCharts.getCell('A66').value =
       `Neste período foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} cirurgias, `+
       `com ${resultSummary.uniquePatients} pacientes únicos. A taxa de realização foi de ${resultSummary.exRate}% nos exames `+
       `e ${resultSummary.suRate}% nas cirurgias. O exame com maior volume foi ${resultSummary.examTop?.[0]||'—'} `+
       `e o procedimento cirúrgico com maior volume foi ${resultSummary.surgTop?.[0]||'—'}.`;
-    wsCharts.getCell('A40').alignment={wrapText:true,vertical:'top'};
-    wsCharts.getCell('A40').font={size:11,color:{argb:COLORS.text}};
-    wsCharts.getCell('A40').fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
-    wsCharts.getCell('A40').border=border;
+    wsCharts.getCell('A66').alignment={wrapText:true,vertical:'top'};
+    wsCharts.getCell('A66').font={size:11,color:{argb:COLORS.text}};
+    wsCharts.getCell('A66').fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
+    wsCharts.getCell('A66').border=border;
 
     // =========================
     // EXAMES
@@ -1123,6 +1133,57 @@ function App(){
     await downloadWorkbook();
   };
 
+
+  const exportResultsPDF = async ()=>{
+    if(exportingPdf) return;
+    setExportingPdf(true);
+
+    try{
+      if(document.fonts?.ready) await document.fonts.ready;
+      await new Promise(resolve=>setTimeout(resolve,180));
+
+      const pages=[pdfPage1Ref.current,pdfPage2Ref.current,pdfPage3Ref.current].filter(Boolean);
+      if(pages.length!==3) throw new Error('Não foi possível localizar as três páginas do relatório.');
+
+      const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
+      const pageWidth=210;
+      const pageHeight=297;
+      const margin=8;
+      const maxWidth=pageWidth-(margin*2);
+      const maxHeight=pageHeight-(margin*2);
+
+      for(let i=0;i<pages.length;i++){
+        const canvas=await html2canvas(pages[i],{
+          scale:2,
+          useCORS:true,
+          backgroundColor:'#f4f8fa',
+          logging:false,
+          windowWidth:Math.max(document.documentElement.clientWidth,1280),
+          ignoreElements:el=>el.classList?.contains('no-pdf')
+        });
+
+        const img=canvas.toDataURL('image/jpeg',0.96);
+        const ratio=Math.min(maxWidth/canvas.width,maxHeight/canvas.height);
+        const imgWidth=canvas.width*ratio;
+        const imgHeight=canvas.height*ratio;
+        const x=(pageWidth-imgWidth)/2;
+        const y=margin;
+
+        if(i>0) pdf.addPage('a4','portrait');
+        pdf.setFillColor(244,248,250);
+        pdf.rect(0,0,pageWidth,pageHeight,'F');
+        pdf.addImage(img,'JPEG',x,y,imgWidth,imgHeight,undefined,'FAST');
+      }
+
+      pdf.save(`Oftalmocastro_Resultados_${dashMonth||'todos-periodos'}.pdf`);
+    }catch(error){
+      console.error(error);
+      alert('Não foi possível gerar o PDF de resultados.');
+    }finally{
+      setExportingPdf(false);
+    }
+  };
+
   const logout=async()=>{ sessionStorage.removeItem('oc_launcher_name'); setLauncherName(''); await supabase.auth.signOut(); setProfile(null); };
 
   if(loading) return <div className="loading-screen">Carregando...</div>;
@@ -1230,75 +1291,88 @@ function App(){
         </div>
       </section>}
 
-      {page==='resultados'&&<section>
-        <div className="topbar results-header">
-          <div>
-            <div className="eyebrow">INTELIGÊNCIA OPERACIONAL</div>
-            <h1>Resultados e análise mensal</h1>
-            <div className="subtitle">Visão consolidada da produção de exames, cirurgias, pacientes e responsáveis pelos lançamentos.</div>
+      {page==='resultados'&&<section className="results-export-root">
+        <div className="pdf-page-block" ref={pdfPage1Ref}>
+          <div className="topbar results-header">
+            <div>
+              <div className="eyebrow">INTELIGÊNCIA OPERACIONAL</div>
+              <h1>Resultados e análise mensal</h1>
+              <div className="subtitle">Visão consolidada da produção de exames, cirurgias, pacientes e responsáveis pelos lançamentos.</div>
+            </div>
+            <div className="top-actions no-pdf">
+              <button className="btn btn-light" onClick={exportExcel}>⬇ Excel</button>
+              <button className="btn btn-excel" onClick={exportResultsPDF} disabled={exportingPdf}>
+                {exportingPdf?'Gerando PDF...':'⬇ Exportar PDF • 3 páginas'}
+              </button>
+            </div>
           </div>
-          <button className="btn btn-excel" onClick={exportExcel}>⬇ Exportar relatório Excel</button>
-        </div>
 
-        <div className="card results-toolbar">
-          <div className="filter-title">Filtros do relatório</div>
-          <div className="filters results-filters">
-            <input type="month" value={dashMonth} onChange={e=>setDashMonth(e.target.value)}/>
-            <Select value={dashDoctor} setValue={setDashDoctor} options={doctors} first="Todos os médicos"/>
-            <Select value={dashUser} setValue={setDashUser} options={['Juliana','Luiza','Elisangela','ADM']} first="Todos os responsáveis"/>
-            <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
+          <div className="card results-toolbar">
+            <div className="filter-title">Filtros do relatório</div>
+            <div className="filters results-filters">
+              <input type="month" value={dashMonth} onChange={e=>setDashMonth(e.target.value)}/>
+              <Select value={dashDoctor} setValue={setDashDoctor} options={doctors} first="Todos os médicos"/>
+              <Select value={dashUser} setValue={setDashUser} options={['Juliana','Luiza','Elisangela','ADM']} first="Todos os responsáveis"/>
+              <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
+            </div>
+            <div className="active-period">Período analisado: <b>{monthLabel(dashMonth)}</b></div>
           </div>
-          <div className="active-period">Período analisado: <b>{monthLabel(dashMonth)}</b></div>
-        </div>
 
-        <div className="analysis-grid results-kpis">
-          <div className="analysis-card highlight"><span>Pacientes únicos</span><strong>{resultSummary.uniquePatients}</strong><small>pacientes no período</small></div>
-          <div className="analysis-card"><span>Total de exames</span><strong>{resultSummary.totalEx}</strong><small>{resultSummary.realEx} realizados • {resultSummary.exRate}% de realização</small></div>
-          <div className="analysis-card"><span>Total de cirurgias</span><strong>{resultSummary.totalSu}</strong><small>{resultSummary.realSu} realizadas • {resultSummary.suRate}% de realização</small></div>
-          <div className="analysis-card"><span>Total de lançamentos</span><strong>{resultSummary.totalEx+resultSummary.totalSu}</strong><small>exames + cirurgias</small></div>
-        </div>
-
-        <div className="results-highlights">
-          <div className="card insight-card"><span>Exame com maior volume</span><b>{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamentos</small></div>
-          <div className="card insight-card"><span>Cirurgia com maior volume</span><b>{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamentos</small></div>
-          <div className="card insight-card"><span>Profissional com maior volume</span><b>{resultSummary.doctorTop?.[0]||'Sem dados'}</b><small>{resultSummary.doctorTop?.[1]||0} registros</small></div>
-        </div>
-
-        <div className="results-section">
-          <div className="results-section-title"><div><h3>Análise de exames</h3><p>Distribuição dos exames no período selecionado.</p></div><div className="pill">{resultSummary.totalEx} exames</div></div>
-          <div className="grid">
-            <div className="card chart-card"><h2>Exames por tipo</h2><Bars data={countManyBy(dashboardExams,'exam_names')}/></div>
-            <div className="card chart-card"><h2>Exames por médico</h2><Bars data={countBy(dashboardExams,'doctor')}/></div>
+          <div className="analysis-grid results-kpis">
+            <div className="analysis-card highlight"><span>Pacientes únicos</span><strong>{resultSummary.uniquePatients}</strong><small>pacientes no período</small></div>
+            <div className="analysis-card"><span>Total de exames</span><strong>{resultSummary.totalEx}</strong><small>{resultSummary.realEx} realizados • {resultSummary.exRate}% de realização</small></div>
+            <div className="analysis-card"><span>Total de cirurgias</span><strong>{resultSummary.totalSu}</strong><small>{resultSummary.realSu} realizadas • {resultSummary.suRate}% de realização</small></div>
+            <div className="analysis-card"><span>Total de lançamentos</span><strong>{resultSummary.totalEx+resultSummary.totalSu}</strong><small>exames + cirurgias</small></div>
           </div>
-          <div className="grid">
+
+          <div className="results-highlights">
+            <div className="card insight-card"><span>Exame com maior volume</span><b>{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamentos</small></div>
+            <div className="card insight-card"><span>Cirurgia com maior volume</span><b>{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamentos</small></div>
+            <div className="card insight-card"><span>Profissional com maior volume</span><b>{resultSummary.doctorTop?.[0]||'Sem dados'}</b><small>{resultSummary.doctorTop?.[1]||0} registros</small></div>
+          </div>
+
+          <div className="results-section results-section-first">
+            <div className="results-section-title"><div><h3>Análise de exames</h3><p>Distribuição dos exames no período selecionado.</p></div><div className="pill">{resultSummary.totalEx} exames</div></div>
+            <div className="grid">
+              <div className="card chart-card"><h2>Exames por tipo</h2><Bars data={countManyBy(dashboardExams,'exam_names')}/></div>
+              <div className="card chart-card"><h2>Exames por médico</h2><Bars data={countBy(dashboardExams,'doctor')}/></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pdf-page-block" ref={pdfPage2Ref}>
+          <div className="grid pdf-continuation-grid">
             <div className="card chart-card"><h2>Status dos exames</h2><Bars data={countBy(dashboardExams,'status')}/></div>
             <div className="card chart-card"><h2>Exames por responsável</h2><Bars data={countBy(dashboardExams.map(x=>({...x,launcher:launchedName(x)})),'launcher')}/></div>
           </div>
+
+          <div className="results-section">
+            <div className="results-section-title"><div><h3>Análise de cirurgias</h3><p>Produção, procedimentos, status e convênios.</p></div><div className="pill">{resultSummary.totalSu} cirurgias</div></div>
+            <div className="grid">
+              <div className="card chart-card"><h2>Cirurgias por procedimento</h2><Bars data={countManyBy(dashboardSurgeries,'procedure_names')}/></div>
+              <div className="card chart-card"><h2>Cirurgias por cirurgião</h2><Bars data={countBy(dashboardSurgeries,'doctor')}/></div>
+            </div>
+          </div>
         </div>
 
-        <div className="results-section">
-          <div className="results-section-title"><div><h3>Análise de cirurgias</h3><p>Produção, procedimentos, status e convênios.</p></div><div className="pill">{resultSummary.totalSu} cirurgias</div></div>
-          <div className="grid">
-            <div className="card chart-card"><h2>Cirurgias por procedimento</h2><Bars data={countManyBy(dashboardSurgeries,'procedure_names')}/></div>
-            <div className="card chart-card"><h2>Cirurgias por cirurgião</h2><Bars data={countBy(dashboardSurgeries,'doctor')}/></div>
-          </div>
-          <div className="grid">
+        <div className="pdf-page-block" ref={pdfPage3Ref}>
+          <div className="grid pdf-continuation-grid">
             <div className="card chart-card"><h2>Status das cirurgias</h2><Bars data={countBy(dashboardSurgeries,'status')}/></div>
             <div className="card chart-card"><h2>Cirurgias por convênio</h2><Bars data={countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel')}/></div>
           </div>
-        </div>
 
-        <div className="card results-users-card">
-          <div className="section-title">
-            <div><h2>Lançamentos por responsável</h2><p className="section-description">Acompanhe quantos registros foram realizados por cada usuário.</p></div>
-            <div className="pill">{resultSummary.totalEx+resultSummary.totalSu} registros</div>
+          <div className="card results-users-card">
+            <div className="section-title">
+              <div><h2>Lançamentos por responsável</h2><p className="section-description">Acompanhe quantos registros foram realizados por cada usuário.</p></div>
+              <div className="pill">{resultSummary.totalEx+resultSummary.totalSu} registros</div>
+            </div>
+            <div className="table-wrap"><table><thead><tr><th>Responsável</th><th>Exames</th><th>Cirurgias</th><th>Total</th><th>Participação</th></tr></thead>
+            <tbody>{userRows.map(r=>{
+              const total=r.exams+r.surgeries;
+              const all=resultSummary.totalEx+resultSummary.totalSu;
+              return <tr key={r.key}><td><b>{r.name}</b></td><td>{r.exams}</td><td>{r.surgeries}</td><td><b>{total}</b></td><td>{all?Math.round(total/all*100):0}%</td></tr>
+            })}</tbody></table></div>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Responsável</th><th>Exames</th><th>Cirurgias</th><th>Total</th><th>Participação</th></tr></thead>
-          <tbody>{userRows.map(r=>{
-            const total=r.exams+r.surgeries;
-            const all=resultSummary.totalEx+resultSummary.totalSu;
-            return <tr key={r.key}><td><b>{r.name}</b></td><td>{r.exams}</td><td>{r.surgeries}</td><td><b>{total}</b></td><td>{all?Math.round(total/all*100):0}%</td></tr>
-          })}</tbody></table></div>
         </div>
       </section>}
 
@@ -1429,9 +1503,9 @@ function App(){
 
           <article className="card manual-card">
             <div className="manual-number">09</div>
-            <h3>Exportar para Excel</h3>
-            <p>Na página Resultados, aplique os filtros desejados e clique em <b>Exportar relatório Excel</b>.</p>
-            <p>O arquivo é gerado com cinco abas: <b>Resumo Executivo, Análise Gráfica, Exames, Cirurgias e Lançamentos</b>, com indicadores, cores, tabelas formatadas e gráficos para facilitar a análise mensal.</p>
+            <h3>Exportar resultados</h3>
+            <p>Na página Resultados, aplique os filtros desejados e clique em <b>Exportar PDF • 3 páginas</b> para gerar o relatório visual igual ao painel. O botão Excel continua disponível para os dados em planilha.</p>
+            <p>O PDF é gerado em <b>3 páginas</b>, seguindo a mesma organização visual do painel de Resultados. A exportação em Excel continua disponível separadamente para conferência dos dados.</p>
           </article>
 
           <article className="card manual-card">
@@ -1477,6 +1551,17 @@ function App(){
       .exam-option.selected{border-color:#477f91;background:#eaf2f5;color:#315f72;font-weight:700}
       .exam-option input{width:auto;margin:0;accent-color:#315f72}
       @media(max-width:700px){.exam-options{grid-template-columns:1fr}}
+    `}</style>
+    <style>{`
+      .pdf-page-block{display:block}
+      .pdf-page-block + .pdf-page-block{margin-top:0}
+      .pdf-continuation-grid{margin-top:24px}
+      .results-section-first{margin-bottom:24px}
+      .btn:disabled{opacity:.65;cursor:not-allowed}
+      @media(max-width:900px){
+        .results-header .top-actions{width:100%;flex-wrap:wrap}
+        .results-header .top-actions .btn{flex:1}
+      }
     `}</style>
     <style>{`
       .bulk-delete-btn{
