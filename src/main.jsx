@@ -20,6 +20,12 @@ const monthLabel = value => {
   return `${names[Number(month)-1]} de ${year}`;
 };
 
+const normalizeText = value => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase()
+  .trim();
+
 const normalizePhone = phone => String(phone || '').replace(/\D/g, '');
 const whatsappUrl = phone => {
   let n = normalizePhone(phone);
@@ -229,9 +235,11 @@ function App(){
   const [editingSurgeryId,setEditingSurgeryId] = useState(null);
 
   const [filterMonth,setFilterMonth] = useState(monthNow);
+  const [filterPatient,setFilterPatient] = useState('');
   const [filterDoctor,setFilterDoctor] = useState('');
   const [filterExam,setFilterExam] = useState('');
   const [sMonth,setSMonth] = useState(monthNow);
+  const [sPatient,setSPatient] = useState('');
   const [sDoctor,setSDoctor] = useState('');
   const [sProcedure,setSProcedure] = useState('');
   const [dashMonth,setDashMonth] = useState(monthNow);
@@ -578,15 +586,17 @@ function App(){
 
   const filteredExams = useMemo(()=>records.filter(r=>
     (!filterMonth||r.date.startsWith(filterMonth)) &&
+    (!filterPatient||normalizeText(r.patient).includes(normalizeText(filterPatient))) &&
     (!filterDoctor||r.doctor_id===filterDoctor) &&
     (!filterExam||r.exam_type_ids?.includes(filterExam))
-  ),[records,filterMonth,filterDoctor,filterExam]);
+  ),[records,filterMonth,filterPatient,filterDoctor,filterExam]);
 
   const filteredSurgeries = useMemo(()=>surgeries.filter(r=>
     (!sMonth||r.date.startsWith(sMonth)) &&
+    (!sPatient||normalizeText(r.patient).includes(normalizeText(sPatient))) &&
     (!sDoctor||r.doctor_id===sDoctor) &&
     (!sProcedure||r.procedure_ids?.includes(sProcedure))
-  ),[surgeries,sMonth,sDoctor,sProcedure]);
+  ),[surgeries,sMonth,sPatient,sDoctor,sProcedure]);
 
   const deleteFilteredExams = async ()=>{
     if(!filteredExams.length) return alert('Nenhum exame encontrado com os filtros atuais.');
@@ -1229,9 +1239,17 @@ function App(){
         <div className="card">
           <div className="filters">
             <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
+            <input
+              type="search"
+              className="patient-name-filter"
+              value={filterPatient}
+              onChange={e=>setFilterPatient(e.target.value)}
+              placeholder="Buscar paciente pelo nome..."
+              aria-label="Buscar paciente pelo nome nos exames"
+            />
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterPatient('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredExams}
@@ -1265,9 +1283,17 @@ function App(){
         <div className="card">
           <div className="filters">
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
+            <input
+              type="search"
+              className="patient-name-filter"
+              value={sPatient}
+              onChange={e=>setSPatient(e.target.value)}
+              placeholder="Buscar paciente pelo nome..."
+              aria-label="Buscar paciente pelo nome nas cirurgias"
+            />
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
             <Select value={sProcedure} setValue={setSProcedure} options={procedures} first="Todos os procedimentos"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSProcedure('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSPatient('');setSDoctor('');setSProcedure('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredSurgeries}
@@ -1491,7 +1517,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">07</div>
             <h3>Filtros</h3>
-            <p>Use os filtros no topo das páginas para localizar informações por <b>mês, médico, exame ou procedimento</b>. Em Resultados também é possível filtrar por responsável e status.</p>
+            <p>Use os filtros no topo das páginas para localizar informações por <b>nome do paciente, mês, médico, exame ou procedimento</b>. A busca pelo paciente funciona enquanto você digita e ignora diferenças entre letras maiúsculas, minúsculas e acentos. Em Resultados também é possível filtrar por responsável e status.</p>
           </article>
 
           <article className="card manual-card">
@@ -1581,6 +1607,18 @@ function App(){
       @media(max-width:900px){
         .filters .bulk-delete-btn{
           width:100%;
+        }
+      }
+    `}</style>
+
+    <style>{`
+      .patient-name-filter{
+        min-width:230px;
+      }
+      @media(max-width:900px){
+        .patient-name-filter{
+          width:100%;
+          min-width:0;
         }
       }
     `}</style>
