@@ -20,12 +20,6 @@ const monthLabel = value => {
   return `${names[Number(month)-1]} de ${year}`;
 };
 
-const normalizeText = value => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g,'')
-  .toLowerCase()
-  .trim();
-
 const normalizePhone = phone => String(phone || '').replace(/\D/g, '');
 const whatsappUrl = phone => {
   let n = normalizePhone(phone);
@@ -49,6 +43,34 @@ const totalItems = (arr, key) => arr.reduce((total, item) => total + (Array.isAr
 const totalItemsByStatus = (arr, key, status) => arr.reduce((total, item) =>
   total + (item.status === status && Array.isArray(item[key]) ? item[key].length : 0), 0);
 
+const countWeightedBy = (arr, key, itemsKey) => arr.reduce((o, item) => {
+  const label = item[key] || 'Não informado';
+  const weight = Array.isArray(item[itemsKey]) && item[itemsKey].length ? item[itemsKey].length : 0;
+  o[label] = (o[label] || 0) + weight;
+  return o;
+}, {});
+
+const percentOf = (value,total) => total ? Math.round((value/total)*100) : 0;
+
+const shiftMonth = (value,delta) => {
+  const base = value || monthNow;
+  const [year,month] = base.split('-').map(Number);
+  const d = new Date(year,month-1+delta,1);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+};
+
+const shortMonthLabel = value => {
+  if(!value) return '';
+  const [year,month] = value.split('-');
+  const names = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  return `${names[Number(month)-1]}/${String(year).slice(-2)}`;
+};
+
+const variationPct = (current,previous) => {
+  if(previous===0) return current>0 ? 100 : 0;
+  return Math.round(((current-previous)/previous)*100);
+};
+
 const groupLaunchRows = (rows, kind) => {
   const groups = new Map();
 
@@ -64,6 +86,8 @@ const groupLaunchRows = (rows, kind) => {
         whatsapp:r.patients?.whatsapp||'',
         doctor:r.doctors?.name||'',
         doctor_id:r.doctors?.id||'',
+        indicatedBy:r.indicated_by?.name||'',
+        indicatedById:r.indicated_by?.id||'',
         status:r.status,
         obs:r.observation||'',
         launchedBy:r.launched_by,
@@ -123,6 +147,158 @@ function Bars({data}){
       <b>{v}</b>
     </div>
   )}</>;
+}
+
+
+function DonutChart({title,data,centerLabel='Total'}){
+  const entries=Object.entries(data||{}).filter(([,v])=>Number(v)>0);
+  const total=entries.reduce((s,[,v])=>s+Number(v||0),0);
+  const colors=['#4f8a6b','#315f72','#b9802b','#b85c5c','#7a6f9b','#6b8f9b','#9a7f56'];
+  const radius=48;
+  const circumference=2*Math.PI*radius;
+  let offset=0;
+
+  if(!total) return <div className="viz-card chart-empty-card"><div className="viz-title">{title}</div><div className="empty">Sem dados para este período.</div></div>;
+
+  return <div className="viz-card donut-card">
+    <div className="viz-title">{title}</div>
+    <div className="donut-layout">
+      <svg className="donut-svg" viewBox="0 0 130 130" role="img" aria-label={`${title}. Total ${total}`}>
+        <circle cx="65" cy="65" r={radius} fill="none" stroke="#edf1f3" strokeWidth="18"/>
+        {entries.map(([label,value],i)=>{
+          const length=(Number(value)/total)*circumference;
+          const dashoffset=-offset;
+          offset+=length;
+          return <circle
+            key={label}
+            cx="65" cy="65" r={radius}
+            fill="none"
+            stroke={colors[i%colors.length]}
+            strokeWidth="18"
+            strokeDasharray={`${length} ${circumference-length}`}
+            strokeDashoffset={dashoffset}
+            transform="rotate(-90 65 65)"
+            strokeLinecap="butt"
+          />;
+        })}
+        <text x="65" y="59" textAnchor="middle" className="donut-total">{total}</text>
+        <text x="65" y="76" textAnchor="middle" className="donut-label">{centerLabel}</text>
+      </svg>
+      <div className="donut-legend">
+        {entries.map(([label,value],i)=><div key={label}>
+          <span className="legend-dot" style={{background:colors[i%colors.length]}}/>
+          <span className="legend-name">{label}</span>
+          <b>{value}</b>
+          <small>{percentOf(value,total)}%</small>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+function TrendLineChart({title,labels,series,percent=false}){
+  const width=760, height=260;
+  const pad={l:52,r:22,t:28,b:44};
+  const values=series.flatMap(s=>s.values||[]);
+  const max=Math.max(...values,percent?100:1);
+  const min=0;
+  const plotW=width-pad.l-pad.r;
+  const plotH=height-pad.t-pad.b;
+  const x=i=>labels.length<=1?pad.l+plotW/2:pad.l+(i/(labels.length-1))*plotW;
+  const y=v=>pad.t+plotH-((Number(v)-min)/(max-min||1))*plotH;
+  const grid=[0,.25,.5,.75,1];
+
+  return <div className="viz-card line-chart-card">
+    <div className="viz-title-row">
+      <div><div className="viz-title">{title}</div><small>{percent?'Percentual de conclusão por mês':'Comparação mensal de volume'}</small></div>
+      <div className="line-legend">{series.map(s=><span key={s.name}><i style={{background:s.color}}/>{s.name}</span>)}</div>
+    </div>
+    <svg className="trend-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+      {grid.map(g=>{
+        const val=Math.round(min+(max-min)*g);
+        const gy=y(val);
+        return <g key={g}>
+          <line x1={pad.l} x2={width-pad.r} y1={gy} y2={gy} stroke="#e7edef" strokeWidth="1"/>
+          <text x={pad.l-8} y={gy+4} textAnchor="end" className="trend-axis">{val}{percent?'%':''}</text>
+        </g>;
+      })}
+      {labels.map((label,i)=><text key={label} x={x(i)} y={height-14} textAnchor="middle" className="trend-axis">{label}</text>)}
+      {series.map(s=>{
+        const points=(s.values||[]).map((v,i)=>`${x(i)},${y(v)}`).join(' ');
+        return <g key={s.name}>
+          <polyline points={points} fill="none" stroke={s.color} strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
+          {(s.values||[]).map((v,i)=><g key={i}>
+            <circle cx={x(i)} cy={y(v)} r="4.2" fill="#fff" stroke={s.color} strokeWidth="2.5"/>
+            <text x={x(i)} y={y(v)-9} textAnchor="middle" className="trend-value">{v}{percent?'%':''}</text>
+          </g>)}
+        </g>;
+      })}
+    </svg>
+  </div>;
+}
+
+function StatusTypeMatrix({title,subtitle,statuses,data,totalByStatus,labelName='Tipo'}){
+  return <div className="card status-matrix-card">
+    <div className="status-matrix-head">
+      <div><span>DETALHAMENTO POR STATUS</span><h3>{title}</h3><p>{subtitle}</p></div>
+    </div>
+    <div className="status-matrix-grid">
+      {statuses.map(status=>{
+        const rows=Object.entries(data?.[status]||{}).sort((a,b)=>b[1]-a[1]);
+        const total=totalByStatus?.[status]||0;
+        return <section className={`status-matrix-section ${statusClass(status)}`} key={status}>
+          <div className="status-matrix-title">
+            <div><span className={`status ${statusClass(status)}`}>{status}</span><small>{labelName}s dentro deste status</small></div>
+            <b>{total}</b>
+          </div>
+          {rows.length?<div className="status-type-list">
+            {rows.map(([name,value])=><div key={name}>
+              <span title={name}>{name}</span>
+              <div className="mini-bar"><i style={{width:`${total?Math.max(4,(value/total)*100):0}%`}}/></div>
+              <b>{value}</b>
+              <small>{percentOf(value,total)}%</small>
+            </div>)}
+          </div>:<div className="status-type-empty">Nenhum registro neste status.</div>}
+        </section>;
+      })}
+    </div>
+  </div>;
+}
+
+
+function DoctorTypeMatrix({title,subtitle,rows,itemLabel='Procedimento'}){
+  return <div className="card doctor-type-card">
+    <div className="doctor-type-head">
+      <div>
+        <span>ANÁLISE POR MÉDICO</span>
+        <h3>{title}</h3>
+        <p>{subtitle}</p>
+      </div>
+    </div>
+
+    {rows?.length ? <div className="doctor-type-grid">
+      {rows.map(row=><section className="doctor-type-section" key={row.doctor}>
+        <div className="doctor-type-title">
+          <div>
+            <b>{row.doctor}</b>
+            <small>{row.total} {row.total===1?'registro':'registros'}</small>
+          </div>
+          <strong>{row.total}</strong>
+        </div>
+
+        <div className="doctor-type-list">
+          {row.items.map(([name,value])=><div key={name}>
+            <span title={name}>{name}</span>
+            <div className="doctor-mini-bar"><i style={{width:`${row.total?Math.max(5,(value/row.total)*100):0}%`}}/></div>
+            <b>{value}</b>
+            <small>{percentOf(value,row.total)}%</small>
+          </div>)}
+        </div>
+      </section>)}
+    </div> : <div className="doctor-type-empty">
+      Nenhum dado de {itemLabel.toLowerCase()} disponível para os filtros atuais.
+    </div>}
+  </div>;
 }
 
 function Modal({open,onClose,title,subtitle,children,onSave,saveText}){
@@ -235,11 +411,9 @@ function App(){
   const [editingSurgeryId,setEditingSurgeryId] = useState(null);
 
   const [filterMonth,setFilterMonth] = useState(monthNow);
-  const [filterPatient,setFilterPatient] = useState('');
   const [filterDoctor,setFilterDoctor] = useState('');
   const [filterExam,setFilterExam] = useState('');
   const [sMonth,setSMonth] = useState(monthNow);
-  const [sPatient,setSPatient] = useState('');
   const [sDoctor,setSDoctor] = useState('');
   const [sProcedure,setSProcedure] = useState('');
   const [dashMonth,setDashMonth] = useState(monthNow);
@@ -247,15 +421,17 @@ function App(){
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
   const [exportingPdf,setExportingPdf] = useState(false);
+  const [exportingPanelPdf,setExportingPanelPdf] = useState(false);
+  const resultsPageRef = useRef(null);
   const pdfPage1Ref = useRef(null);
   const pdfPage2Ref = useRef(null);
   const pdfPage3Ref = useRef(null);
 
   const [examForm,setExamForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:''
   });
 
@@ -305,13 +481,15 @@ function App(){
       supabase.from('exams').select(`
         id,launch_group_id,exam_date,status,observation,launched_by,launched_by_name,
         patients(id,full_name,whatsapp),
-        doctors(id,name),
+        doctors:doctors!exams_doctor_id_fkey(id,name),
+        indicated_by:doctors!exams_indicated_by_doctor_id_fkey(id,name),
         exam_types(id,name)
       `).order('exam_date',{ascending:false}),
       supabase.from('surgeries').select(`
         id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,
         patients(id,full_name,whatsapp),
-        doctors(id,name),
+        doctors:doctors!surgeries_doctor_id_fkey(id,name),
+        indicated_by:doctors!surgeries_indicated_by_doctor_id_fkey(id,name),
         procedures(id,name),
         insurances(id,name)
       `).order('surgery_date',{ascending:false})
@@ -363,6 +541,7 @@ function App(){
       const rows=examForm.exam_type_ids.map(examTypeId=>({
         launch_group_id,
         exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
+        indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId, status:examForm.status,
         observation:examForm.obs||null, launched_by:session.user.id,
         launched_by_name:examLaunchName
@@ -389,6 +568,7 @@ function App(){
         surgery_date:sForm.date,
         patient_id,
         doctor_id:sForm.doctor_id,
+        indicated_by_doctor_id:sForm.indicated_by_doctor_id||null,
         procedure_id:procedureId,
         eye:sForm.eye,
         insurance_id:sForm.insurance_id||null,
@@ -425,6 +605,7 @@ function App(){
       patient:r.patient,
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
+      indicated_by_doctor_id:r.indicatedById||'',
       exam_type_ids:r.exam_type_ids||[],
       status:r.status,
       launcher:r.launchedByName || currentLaunchName || '',
@@ -440,6 +621,7 @@ function App(){
       patient:r.patient,
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
+      indicated_by_doctor_id:r.indicatedById||'',
       procedure_ids:r.procedure_ids||[],
       eye:r.eye || 'Não se aplica',
       insurance_id:r.insurance_id || '',
@@ -480,6 +662,7 @@ function App(){
         exam_date:examForm.date,
         patient_id:original.patient_id,
         doctor_id:examForm.doctor_id,
+        indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId,
         status:examForm.status,
         observation:examForm.obs||null,
@@ -535,7 +718,7 @@ function App(){
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -552,7 +735,7 @@ function App(){
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
   };
 
   const delExam = async id=>{
@@ -586,17 +769,15 @@ function App(){
 
   const filteredExams = useMemo(()=>records.filter(r=>
     (!filterMonth||r.date.startsWith(filterMonth)) &&
-    (!filterPatient||normalizeText(r.patient).includes(normalizeText(filterPatient))) &&
     (!filterDoctor||r.doctor_id===filterDoctor) &&
     (!filterExam||r.exam_type_ids?.includes(filterExam))
-  ),[records,filterMonth,filterPatient,filterDoctor,filterExam]);
+  ),[records,filterMonth,filterDoctor,filterExam]);
 
   const filteredSurgeries = useMemo(()=>surgeries.filter(r=>
     (!sMonth||r.date.startsWith(sMonth)) &&
-    (!sPatient||normalizeText(r.patient).includes(normalizeText(sPatient))) &&
     (!sDoctor||r.doctor_id===sDoctor) &&
     (!sProcedure||r.procedure_ids?.includes(sProcedure))
-  ),[surgeries,sMonth,sPatient,sDoctor,sProcedure]);
+  ),[surgeries,sMonth,sDoctor,sProcedure]);
 
   const deleteFilteredExams = async ()=>{
     if(!filteredExams.length) return alert('Nenhum exame encontrado com os filtros atuais.');
@@ -664,16 +845,184 @@ function App(){
   const resultSummary=useMemo(()=>{
     const totalEx=totalItems(dashboardExams,'exam_type_ids');
     const totalSu=totalItems(dashboardSurgeries,'procedure_ids');
+
+    const exAgendado=totalItemsByStatus(dashboardExams,'exam_type_ids','Agendado');
+    const exPendente=totalItemsByStatus(dashboardExams,'exam_type_ids','Pendente');
     const realEx=totalItemsByStatus(dashboardExams,'exam_type_ids','Realizado');
+    const exCancelado=totalItemsByStatus(dashboardExams,'exam_type_ids','Cancelado');
+    const exOpen=exAgendado+exPendente;
+
+    const suSolicitacao=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Solicitação');
+    const suPendente=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Pendente');
+    const suAutorizada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Autorizada');
+    const suAgendada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Agendada');
     const realSu=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Realizada');
+    const suCancelada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Cancelada');
+    const suOpen=suSolicitacao+suPendente+suAutorizada+suAgendada;
+
+    const paymentCounts=countWeightedBy(dashboardSurgeries,'payment','procedure_ids');
+    const paymentPending=(paymentCounts['Pendente']||0)+(paymentCounts['20% pago']||0)+(paymentCounts['Não informado']||0);
+    const paymentClosed=(paymentCounts['Pago']||0)+(paymentCounts['Convênio']||0);
+
     const examTop=Object.entries(countManyBy(dashboardExams,'exam_names')).sort((a,b)=>b[1]-a[1])[0];
     const surgTop=Object.entries(countManyBy(dashboardSurgeries,'procedure_names')).sort((a,b)=>b[1]-a[1])[0];
-    const doctorTop=Object.entries(countBy([...dashboardExams,...dashboardSurgeries],'doctor')).sort((a,b)=>b[1]-a[1])[0];
-    const uniquePatients=new Set([...dashboardExams,...dashboardSurgeries].map(x=>`${x.patient}|${normalizePhone(x.whatsapp)}`)).size;
-    return {totalEx,totalSu,realEx,realSu,examTop,surgTop,doctorTop,uniquePatients,
-      exRate:totalEx?Math.round(realEx/totalEx*100):0,
-      suRate:totalSu?Math.round(realSu/totalSu*100):0};
+    const doctorTop=Object.entries(countWeightedBy(
+      [...dashboardExams.map(x=>({...x,_items:x.exam_type_ids})),...dashboardSurgeries.map(x=>({...x,_items:x.procedure_ids}))],
+      'doctor',
+      '_items'
+    )).sort((a,b)=>b[1]-a[1])[0];
+
+    const insuranceTop=Object.entries(
+      countWeightedBy(
+        dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),
+        'insuranceLabel',
+        'procedure_ids'
+      )
+    ).sort((a,b)=>b[1]-a[1])[0];
+
+    const uniquePatients=new Set(
+      [...dashboardExams,...dashboardSurgeries]
+        .map(x=>`${String(x.patient||'').trim().toLowerCase()}|${normalizePhone(x.whatsapp)}`)
+        .filter(x=>x!=='|')
+    ).size;
+
+    return {
+      totalEx,totalSu,realEx,realSu,
+      exAgendado,exPendente,exCancelado,exOpen,
+      suSolicitacao,suPendente,suAutorizada,suAgendada,suCancelada,suOpen,
+      paymentCounts,paymentPending,paymentClosed,
+      examTop,surgTop,doctorTop,insuranceTop,uniquePatients,
+      exRate:percentOf(realEx,totalEx),
+      suRate:percentOf(realSu,totalSu),
+      exOpenRate:percentOf(exOpen,totalEx),
+      suOpenRate:percentOf(suOpen,totalSu),
+      paymentPendingRate:percentOf(paymentPending,totalSu)
+    };
   },[dashboardExams,dashboardSurgeries]);
+
+  const advancedAnalytics=useMemo(()=>{
+    const baseMonth=dashMonth||monthNow;
+    const previousMonth=shiftMonth(baseMonth,-1);
+    const months=Array.from({length:6},(_,i)=>shiftMonth(baseMonth,i-5));
+
+    const baseExamRows=records.filter(r=>
+      (!dashDoctor||r.doctor_id===dashDoctor) &&
+      (!dashUser||r.launchedByName===dashUser)
+    );
+
+    const baseSurgeryRows=surgeries.filter(r=>
+      (!dashDoctor||r.doctor_id===dashDoctor) &&
+      (!dashUser||r.launchedByName===dashUser)
+    );
+
+    const byMonth=(arr,month)=>arr.filter(r=>r.date?.startsWith(month));
+
+    const examTrend=months.map(month=>totalItems(byMonth(baseExamRows,month),'exam_type_ids'));
+    const surgeryTrend=months.map(month=>totalItems(byMonth(baseSurgeryRows,month),'procedure_ids'));
+    const examConversion=months.map(month=>{
+      const rows=byMonth(baseExamRows,month);
+      const total=totalItems(rows,'exam_type_ids');
+      const done=totalItemsByStatus(rows,'exam_type_ids','Realizado');
+      return percentOf(done,total);
+    });
+    const surgeryConversion=months.map(month=>{
+      const rows=byMonth(baseSurgeryRows,month);
+      const total=totalItems(rows,'procedure_ids');
+      const done=totalItemsByStatus(rows,'procedure_ids','Realizada');
+      return percentOf(done,total);
+    });
+
+    const currentExamRows=byMonth(baseExamRows,baseMonth);
+    const previousExamRows=byMonth(baseExamRows,previousMonth);
+    const currentSurgeryRows=byMonth(baseSurgeryRows,baseMonth);
+    const previousSurgeryRows=byMonth(baseSurgeryRows,previousMonth);
+
+    const currentExamTotal=totalItems(currentExamRows,'exam_type_ids');
+    const previousExamTotal=totalItems(previousExamRows,'exam_type_ids');
+    const currentSurgeryTotal=totalItems(currentSurgeryRows,'procedure_ids');
+    const previousSurgeryTotal=totalItems(previousSurgeryRows,'procedure_ids');
+
+    const currentExamDone=totalItemsByStatus(currentExamRows,'exam_type_ids','Realizado');
+    const previousExamDone=totalItemsByStatus(previousExamRows,'exam_type_ids','Realizado');
+    const currentSurgeryDone=totalItemsByStatus(currentSurgeryRows,'procedure_ids','Realizada');
+    const previousSurgeryDone=totalItemsByStatus(previousSurgeryRows,'procedure_ids','Realizada');
+
+    const examStatuses=['Realizado','Agendado','Pendente','Cancelado'];
+    const surgeryStatuses=['Realizada','Agendada','Autorizada','Pendente','Solicitação','Cancelada'];
+
+    const examByStatusType=Object.fromEntries(examStatuses.map(status=>[
+      status,
+      countManyBy(dashboardExams.filter(r=>r.status===status),'exam_names')
+    ]));
+
+    const surgeryByStatusType=Object.fromEntries(surgeryStatuses.map(status=>[
+      status,
+      countManyBy(dashboardSurgeries.filter(r=>r.status===status),'procedure_names')
+    ]));
+
+    const examStatusTotals=Object.fromEntries(examStatuses.map(status=>[
+      status,totalItemsByStatus(dashboardExams,'exam_type_ids',status)
+    ]));
+
+    const surgeryStatusTotals=Object.fromEntries(surgeryStatuses.map(status=>[
+      status,totalItemsByStatus(dashboardSurgeries,'procedure_ids',status)
+    ]));
+
+    const examStatusPie=examStatusTotals;
+    const surgeryStatusPie=surgeryStatusTotals;
+
+    const buildDoctorRows=(arr,namesKey,doctorKey='doctor')=>{
+      const grouped=new Map();
+
+      arr.forEach(record=>{
+        const doctor=record[doctorKey]||'Não informado';
+        if(!grouped.has(doctor)) grouped.set(doctor,{doctor,total:0,items:{}});
+        const row=grouped.get(doctor);
+        const names=Array.isArray(record[namesKey])?record[namesKey]:[];
+        names.forEach(name=>{
+          row.total+=1;
+          row.items[name]=(row.items[name]||0)+1;
+        });
+      });
+
+      return [...grouped.values()]
+        .map(row=>({...row,items:Object.entries(row.items).sort((a,b)=>b[1]-a[1])}))
+        .sort((a,b)=>b.total-a.total);
+    };
+
+    const examByDoctor=buildDoctorRows(dashboardExams,'exam_names','doctor');
+    const surgeryByDoctor=buildDoctorRows(dashboardSurgeries,'procedure_names','doctor');
+
+    const examByIndication=buildDoctorRows(
+      dashboardExams.filter(r=>r.indicatedBy),
+      'exam_names',
+      'indicatedBy'
+    );
+
+    const surgeryByIndication=buildDoctorRows(
+      dashboardSurgeries.filter(r=>r.indicatedBy),
+      'procedure_names',
+      'indicatedBy'
+    );
+
+    return{
+      baseMonth,previousMonth,months,
+      monthLabels:months.map(shortMonthLabel),
+      examTrend,surgeryTrend,examConversion,surgeryConversion,
+      examByStatusType,surgeryByStatusType,examStatusTotals,surgeryStatusTotals,
+      examStatusPie,surgeryStatusPie,
+      examByDoctor,surgeryByDoctor,examByIndication,surgeryByIndication,
+      currentExamTotal,previousExamTotal,currentSurgeryTotal,previousSurgeryTotal,
+      currentExamRate:percentOf(currentExamDone,currentExamTotal),
+      previousExamRate:percentOf(previousExamDone,previousExamTotal),
+      currentSurgeryRate:percentOf(currentSurgeryDone,currentSurgeryTotal),
+      previousSurgeryRate:percentOf(previousSurgeryDone,previousSurgeryTotal),
+      examVolumeDelta:variationPct(currentExamTotal,previousExamTotal),
+      surgeryVolumeDelta:variationPct(currentSurgeryTotal,previousSurgeryTotal),
+      examRateDelta:percentOf(currentExamDone,currentExamTotal)-percentOf(previousExamDone,previousExamTotal),
+      surgeryRateDelta:percentOf(currentSurgeryDone,currentSurgeryTotal)-percentOf(previousSurgeryDone,previousSurgeryTotal)
+    };
+  },[records,surgeries,dashboardExams,dashboardSurgeries,dashMonth,dashDoctor,dashUser]);
 
   const exportExcel = async ()=>{
     const month = dashMonth || 'todos-periodos';
@@ -1144,51 +1493,923 @@ function App(){
   };
 
 
-  const exportResultsPDF = async ()=>{
-    if(exportingPdf) return;
-    setExportingPdf(true);
+  const exportResultsPagePDF = async ()=>{
+    if(exportingPanelPdf) return;
+    const element=resultsPageRef.current;
+    if(!element) return alert('Não foi possível localizar a página de Resultados.');
+
+    setExportingPanelPdf(true);
 
     try{
       if(document.fonts?.ready) await document.fonts.ready;
       await new Promise(resolve=>setTimeout(resolve,180));
 
-      const pages=[pdfPage1Ref.current,pdfPage2Ref.current,pdfPage3Ref.current].filter(Boolean);
-      if(pages.length!==3) throw new Error('Não foi possível localizar as três páginas do relatório.');
+      const canvas=await html2canvas(element,{
+        scale:1.65,
+        useCORS:true,
+        backgroundColor:'#f4f7f8',
+        logging:false,
+        windowWidth:Math.max(document.documentElement.clientWidth,1440),
+        ignoreElements:el=>el.classList?.contains('no-pdf')
+      });
 
-      const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
-      const pageWidth=210;
-      const pageHeight=297;
-      const margin=8;
-      const maxWidth=pageWidth-(margin*2);
-      const maxHeight=pageHeight-(margin*2);
+      const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+      const pageWidth=297;
+      const pageHeight=210;
+      const margin=7;
+      const footerSpace=7;
+      const usableWidth=pageWidth-(margin*2);
+      const usableHeight=pageHeight-(margin*2)-footerSpace;
 
-      for(let i=0;i<pages.length;i++){
-        const canvas=await html2canvas(pages[i],{
-          scale:2,
-          useCORS:true,
-          backgroundColor:'#f4f8fa',
-          logging:false,
-          windowWidth:Math.max(document.documentElement.clientWidth,1280),
-          ignoreElements:el=>el.classList?.contains('no-pdf')
-        });
+      const sliceHeightPx=Math.max(1,Math.floor(canvas.width*(usableHeight/usableWidth)));
+      const totalPages=Math.ceil(canvas.height/sliceHeightPx);
 
-        const img=canvas.toDataURL('image/jpeg',0.96);
-        const ratio=Math.min(maxWidth/canvas.width,maxHeight/canvas.height);
-        const imgWidth=canvas.width*ratio;
-        const imgHeight=canvas.height*ratio;
-        const x=(pageWidth-imgWidth)/2;
-        const y=margin;
+      for(let pageIndex=0;pageIndex<totalPages;pageIndex++){
+        const sourceY=pageIndex*sliceHeightPx;
+        const currentSliceHeight=Math.min(sliceHeightPx,canvas.height-sourceY);
 
-        if(i>0) pdf.addPage('a4','portrait');
-        pdf.setFillColor(244,248,250);
+        const slice=document.createElement('canvas');
+        slice.width=canvas.width;
+        slice.height=currentSliceHeight;
+
+        const ctx=slice.getContext('2d');
+        ctx.fillStyle='#f4f7f8';
+        ctx.fillRect(0,0,slice.width,slice.height);
+        ctx.drawImage(
+          canvas,
+          0,sourceY,canvas.width,currentSliceHeight,
+          0,0,canvas.width,currentSliceHeight
+        );
+
+        const img=slice.toDataURL('image/jpeg',0.94);
+        const imgHeight=(currentSliceHeight/canvas.width)*usableWidth;
+
+        if(pageIndex>0) pdf.addPage('a4','landscape');
+
+        pdf.setFillColor(244,247,248);
         pdf.rect(0,0,pageWidth,pageHeight,'F');
-        pdf.addImage(img,'JPEG',x,y,imgWidth,imgHeight,undefined,'FAST');
+        pdf.addImage(img,'JPEG',margin,margin,usableWidth,imgHeight,undefined,'FAST');
+
+        pdf.setDrawColor(220,228,230);
+        pdf.line(margin,pageHeight-8,pageWidth-margin,pageHeight-8);
+        pdf.setTextColor(116,132,138);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(6.5);
+        pdf.text(
+          `Oftalmocastro - Resultados - ${monthLabel(dashMonth)}`,
+          margin,
+          pageHeight-4.5
+        );
+        pdf.text(
+          `Página ${pageIndex+1} de ${totalPages}`,
+          pageWidth-margin,
+          pageHeight-4.5,
+          {align:'right'}
+        );
       }
 
-      pdf.save(`Oftalmocastro_Resultados_${dashMonth||'todos-periodos'}.pdf`);
+      pdf.save(`Oftalmocastro_Painel_Resultados_${dashMonth||'todos-periodos'}.pdf`);
     }catch(error){
       console.error(error);
-      alert('Não foi possível gerar o PDF de resultados.');
+      alert('Não foi possível exportar a página de Resultados em PDF.');
+    }finally{
+      setExportingPanelPdf(false);
+    }
+  };
+
+
+  const exportResultsPDF = async ()=>{
+    if(exportingPdf) return;
+    setExportingPdf(true);
+
+    try{
+      const selectedDoctor=dashDoctor ? doctors.find(d=>d.id===dashDoctor)?.name || 'Não identificado' : 'Todos os médicos';
+      const selectedUser=dashUser || 'Todos os responsáveis';
+      const selectedStatus=dashStatus || 'Todos os status';
+      const periodLabel=monthLabel(dashMonth);
+      const generatedAt=new Date().toLocaleString('pt-BR');
+
+      const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+      const margin=12;
+      const pageWidth=297;
+      const pageHeight=210;
+      const contentWidth=pageWidth-(margin*2);
+      const footerY=202;
+      let y=0;
+      let sectionTitle='';
+
+      const safe=value=>String(value??'')
+        .replace(/•/g,'-')
+        .replace(/[“”]/g,'"')
+        .replace(/[‘’]/g,"'")
+        .replace(/…/g,'...')
+        .replace(/[^\x00-\xFF]/g,'');
+
+      const split=(value,width,size=8)=>{
+        pdf.setFontSize(size);
+        return pdf.splitTextToSize(safe(value||'—'),width);
+      };
+
+      const makeCanvas=(width=1100,height=500)=>{
+        const canvas=document.createElement('canvas');
+        canvas.width=width;
+        canvas.height=height;
+        const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#FFFFFF';
+        ctx.fillRect(0,0,width,height);
+        return {canvas,ctx};
+      };
+
+      const makeLineChartImage=(title,labels,series,percent=false)=>{
+        const {canvas,ctx}=makeCanvas(1200,500);
+        const W=canvas.width,H=canvas.height;
+        const pad={l:82,r:45,t:80,b:70};
+        const plotW=W-pad.l-pad.r,plotH=H-pad.t-pad.b;
+        const values=series.flatMap(s=>s.values);
+        const max=Math.max(...values,percent?100:1);
+        const x=i=>labels.length<=1?pad.l+plotW/2:pad.l+(i/(labels.length-1))*plotW;
+        const y=v=>pad.t+plotH-(Number(v)/(max||1))*plotH;
+
+        ctx.fillStyle='#20313B';
+        ctx.font='700 28px Arial';
+        ctx.fillText(title,36,42);
+
+        [0,.25,.5,.75,1].forEach(g=>{
+          const val=Math.round(max*g);
+          const gy=y(val);
+          ctx.strokeStyle='#E6ECEE';
+          ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(pad.l,gy);ctx.lineTo(W-pad.r,gy);ctx.stroke();
+          ctx.fillStyle='#7B8A90';
+          ctx.font='14px Arial';
+          ctx.textAlign='right';
+          ctx.fillText(`${val}${percent?'%':''}`,pad.l-12,gy+5);
+        });
+
+        labels.forEach((label,i)=>{
+          ctx.fillStyle='#667A82';
+          ctx.font='14px Arial';
+          ctx.textAlign='center';
+          ctx.fillText(label,x(i),H-34);
+        });
+
+        series.forEach(s=>{
+          ctx.strokeStyle=s.color;
+          ctx.fillStyle=s.color;
+          ctx.lineWidth=4;
+          ctx.beginPath();
+          s.values.forEach((v,i)=>{
+            if(i===0) ctx.moveTo(x(i),y(v));
+            else ctx.lineTo(x(i),y(v));
+          });
+          ctx.stroke();
+
+          s.values.forEach((v,i)=>{
+            ctx.beginPath();
+            ctx.arc(x(i),y(v),6,0,Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle='#20313B';
+            ctx.font='700 13px Arial';
+            ctx.textAlign='center';
+            ctx.fillText(`${v}${percent?'%':''}`,x(i),y(v)-13);
+            ctx.fillStyle=s.color;
+          });
+        });
+
+        let lx=pad.l;
+        series.forEach(s=>{
+          ctx.fillStyle=s.color;
+          ctx.fillRect(lx,58,18,5);
+          ctx.fillStyle='#53636E';
+          ctx.font='14px Arial';
+          ctx.textAlign='left';
+          ctx.fillText(s.name,lx+26,64);
+          lx+=170;
+        });
+
+        ctx.strokeStyle='#DDE6EA';
+        ctx.strokeRect(0,0,W,H);
+        return canvas.toDataURL('image/png');
+      };
+
+      const makeDonutImage=(title,data)=>{
+        const {canvas,ctx}=makeCanvas(700,500);
+        const entries=Object.entries(data||{}).filter(([,v])=>Number(v)>0);
+        const total=entries.reduce((s,[,v])=>s+Number(v),0);
+        const colors=['#4F8A6B','#315F72','#B9802B','#B85C5C','#7A6F9B','#6B8F9B','#9A7F56'];
+
+        ctx.fillStyle='#20313B';
+        ctx.font='700 27px Arial';
+        ctx.fillText(title,30,42);
+
+        if(!total){
+          ctx.fillStyle='#74838C';ctx.font='18px Arial';
+          ctx.fillText('Sem dados para o período.',30,90);
+          return canvas.toDataURL('image/png');
+        }
+
+        const cx=205,cy=265,r=120,inner=72;
+        let start=-Math.PI/2;
+        entries.forEach(([label,value],i)=>{
+          const angle=(Number(value)/total)*Math.PI*2;
+          ctx.beginPath();
+          ctx.moveTo(cx,cy);
+          ctx.arc(cx,cy,r,start,start+angle);
+          ctx.closePath();
+          ctx.fillStyle=colors[i%colors.length];
+          ctx.fill();
+          start+=angle;
+        });
+
+        ctx.beginPath();ctx.arc(cx,cy,inner,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();
+        ctx.fillStyle='#20313B';ctx.font='700 34px Arial';ctx.textAlign='center';ctx.fillText(String(total),cx,cy-3);
+        ctx.fillStyle='#74838C';ctx.font='15px Arial';ctx.fillText('Total',cx,cy+22);
+
+        let ly=118;
+        entries.forEach(([label,value],i)=>{
+          ctx.fillStyle=colors[i%colors.length];ctx.fillRect(395,ly-11,16,16);
+          ctx.fillStyle='#53636E';ctx.font='15px Arial';ctx.textAlign='left';
+          const short=String(label).length>22?String(label).slice(0,21)+'…':String(label);
+          ctx.fillText(short,422,ly+1);
+          ctx.fillStyle='#20313B';ctx.font='700 15px Arial';
+          ctx.fillText(`${value} (${percentOf(value,total)}%)`,575,ly+1);
+          ly+=39;
+        });
+
+        ctx.strokeStyle='#DDE6EA';ctx.strokeRect(0,0,canvas.width,canvas.height);
+        return canvas.toDataURL('image/png');
+      };
+
+      const statusPalette=status=>{
+        const s=String(status||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+        if(s.includes('realiz')||s==='pago'||s==='convenio') return {fill:[237,246,240],text:[62,118,86],border:[208,229,216]};
+        if(s.includes('cancel')) return {fill:[251,238,238],text:[166,76,76],border:[238,213,213]};
+        if(s.includes('pendent')||s.includes('solicit')||s.includes('autoriz')||s.includes('20%')) return {fill:[255,247,229],text:[151,104,32],border:[239,220,179]};
+        return {fill:[234,242,245],text:[49,95,114],border:[211,228,233]};
+      };
+
+      const pageHeader=(title,subtitle='')=>{
+        pdf.setFillColor(35,78,94);
+        pdf.rect(0,0,pageWidth,24,'F');
+
+        pdf.setTextColor(255,255,255);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(15);
+        pdf.text('OFTALMOCASTRO',margin,9);
+
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(7.6);
+        pdf.text('Gestao de exames e cirurgias - Relatorio gerencial',margin,15);
+
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(11);
+        pdf.text(safe(title),pageWidth-margin,9,{align:'right'});
+
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(7);
+        if(subtitle) pdf.text(safe(subtitle),pageWidth-margin,15,{align:'right'});
+
+        y=31;
+        sectionTitle=title;
+      };
+
+      const newPage=(title=sectionTitle,subtitle=periodLabel)=>{
+        pdf.addPage('a4','landscape');
+        pageHeader(title,subtitle);
+      };
+
+      const ensure=(height,title=sectionTitle)=>{
+        if(y+height>footerY-6) newPage(title,periodLabel);
+      };
+
+      const drawSection=(title,subtitle='')=>{
+        ensure(18,title);
+        pdf.setFillColor(242,247,248);
+        pdf.setDrawColor(219,230,233);
+        pdf.roundedRect(margin,y,contentWidth,14,2,2,'FD');
+        pdf.setTextColor(39,78,88);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(10);
+        pdf.text(safe(title),margin+4,y+5.5);
+        if(subtitle){
+          pdf.setTextColor(112,130,136);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(6.7);
+          pdf.text(safe(subtitle),margin+4,y+10.5);
+        }
+        y+=18;
+      };
+
+      const drawMetricCards=(metrics,cols=4)=>{
+        const gap=4;
+        const cardW=(contentWidth-gap*(cols-1))/cols;
+        const cardH=24;
+        const rows=Math.ceil(metrics.length/cols);
+
+        ensure(rows*(cardH+4)+2);
+        metrics.forEach((m,i)=>{
+          const row=Math.floor(i/cols);
+          const col=i%cols;
+          const x=margin+col*(cardW+gap);
+          const cy=y+row*(cardH+4);
+
+          pdf.setFillColor(...(m.fill||[250,252,252]));
+          pdf.setDrawColor(...(m.border||[223,231,232]));
+          pdf.roundedRect(x,cy,cardW,cardH,2.5,2.5,'FD');
+
+          pdf.setTextColor(116,132,136);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(6.5);
+          pdf.text(safe(String(m.label||'').toUpperCase()),x+4,cy+5.5);
+
+          pdf.setTextColor(...(m.valueColor||[41,82,91]));
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(15);
+          pdf.text(safe(m.value),x+4,cy+13.8);
+
+          if(m.detail){
+            pdf.setTextColor(129,143,146);
+            pdf.setFont('helvetica','normal');
+            pdf.setFontSize(6.2);
+            const lines=split(m.detail,cardW-8,6.2).slice(0,2);
+            pdf.text(lines,x+4,cy+18.2);
+          }
+        });
+        y+=rows*(cardH+4)+1;
+      };
+
+      const drawStatusPanel=(title,total,items)=>{
+        const x=margin;
+        const panelW=contentWidth;
+        const rowH=10;
+        const h=16+(items.length*rowH);
+        ensure(h+5,title);
+
+        pdf.setFillColor(255,255,255);
+        pdf.setDrawColor(221,229,231);
+        pdf.roundedRect(x,y,panelW,h,2.5,2.5,'FD');
+
+        pdf.setTextColor(45,72,78);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(9.5);
+        pdf.text(safe(title),x+4,y+6);
+        pdf.setTextColor(116,130,134);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(6.8);
+        pdf.text(`Total analisado: ${total}`,x+4,y+11);
+
+        let rowY=y+16;
+        items.forEach((item,i)=>{
+          const palette=statusPalette(item.label);
+          if(i%2===0){
+            pdf.setFillColor(249,251,251);
+            pdf.rect(x+1,rowY-1,panelW-2,rowH,'F');
+          }
+
+          pdf.setFillColor(...palette.fill);
+          pdf.setDrawColor(...palette.border);
+          pdf.roundedRect(x+4,rowY+1,34,6,2,2,'FD');
+          pdf.setTextColor(...palette.text);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(6.2);
+          pdf.text(safe(item.label),x+21,rowY+5,{align:'center'});
+
+          pdf.setTextColor(54,72,77);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(8);
+          pdf.text(String(item.value),x+48,rowY+5);
+
+          const pct=percentOf(item.value,total);
+          pdf.setTextColor(117,130,134);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(6.7);
+          pdf.text(`${pct}% do total`,x+60,rowY+5);
+
+          const barX=x+91;
+          const barW=panelW-101;
+          pdf.setFillColor(236,241,242);
+          pdf.roundedRect(barX,rowY+2,barW,4,2,2,'F');
+          if(pct>0){
+            pdf.setFillColor(...palette.text);
+            pdf.roundedRect(barX,rowY+2,Math.max(2,(barW*pct)/100),4,2,2,'F');
+          }
+          rowY+=rowH;
+        });
+
+        y+=h+6;
+      };
+
+      const drawSimpleRanking=(title,data,maxItems=8)=>{
+        const entries=Object.entries(data||{}).sort((a,b)=>b[1]-a[1]).slice(0,maxItems);
+        if(!entries.length) return;
+
+        const h=16+(entries.length*8);
+        ensure(h+4,title);
+
+        pdf.setFillColor(255,255,255);
+        pdf.setDrawColor(221,229,231);
+        pdf.roundedRect(margin,y,contentWidth,h,2.5,2.5,'FD');
+
+        pdf.setTextColor(45,72,78);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(9);
+        pdf.text(safe(title),margin+4,y+6);
+
+        const max=Math.max(...entries.map(([,v])=>v),1);
+        let ry=y+13;
+
+        entries.forEach(([label,value])=>{
+          const labelLines=split(label,72,6.5);
+          pdf.setTextColor(82,101,106);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(6.5);
+          pdf.text(labelLines[0],margin+4,ry+3);
+
+          const bx=margin+82;
+          const bw=contentWidth-102;
+          pdf.setFillColor(237,242,243);
+          pdf.roundedRect(bx,ry,bw,4,2,2,'F');
+          pdf.setFillColor(49,95,114);
+          pdf.roundedRect(bx,ry,Math.max(2,(value/max)*bw),4,2,2,'F');
+
+          pdf.setTextColor(39,76,86);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(6.7);
+          pdf.text(String(value),margin+contentWidth-4,ry+3,{align:'right'});
+          ry+=8;
+        });
+
+        y+=h+6;
+      };
+
+      const drawTable=(title,columns,rows,options={})=>{
+        drawSection(title,options.subtitle||'');
+
+        const headerH=9;
+        const padX=1.8;
+        const widths=columns.map(c=>c.width);
+        const totalW=widths.reduce((a,b)=>a+b,0);
+        if(Math.abs(totalW-contentWidth)>0.6){
+          throw new Error(`Tabela "${title}" com largura invalida: ${totalW}mm`);
+        }
+
+        const drawHeader=()=>{
+          ensure(headerH+6,title);
+          let x=margin;
+          pdf.setFillColor(49,95,114);
+          pdf.setTextColor(255,255,255);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(6.4);
+          columns.forEach((c,i)=>{
+            pdf.rect(x,y,widths[i],headerH,'F');
+            const lines=split(c.label,widths[i]-padX*2,6.4).slice(0,2);
+            pdf.text(lines,x+padX,y+3.7);
+            x+=widths[i];
+          });
+          y+=headerH;
+        };
+
+        drawHeader();
+
+        if(!rows.length){
+          pdf.setFillColor(250,252,252);
+          pdf.setDrawColor(228,234,235);
+          pdf.rect(margin,y,contentWidth,12,'FD');
+          pdf.setTextColor(126,138,141);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(7.5);
+          pdf.text('Nenhum registro encontrado para os filtros selecionados.',margin+4,y+7);
+          y+=16;
+          return;
+        }
+
+        rows.forEach((row,rowIndex)=>{
+          const cellLines=columns.map(c=>{
+            const value=typeof c.value==='function' ? c.value(row) : row[c.key];
+            return split(value,c.width-padX*2,6.3);
+          });
+
+          const maxLines=Math.max(...cellLines.map(lines=>Math.min(lines.length,options.maxLines||4)),1);
+          const rowH=Math.max(8,maxLines*3.2+3);
+
+          if(y+rowH>footerY-6){
+            newPage(title,periodLabel);
+            drawHeader();
+          }
+
+          let x=margin;
+          if(rowIndex%2===1){
+            pdf.setFillColor(249,251,251);
+            pdf.rect(margin,y,contentWidth,rowH,'F');
+          }
+
+          columns.forEach((c,i)=>{
+            pdf.setDrawColor(228,234,235);
+            pdf.rect(x,y,widths[i],rowH);
+
+            if(c.key==='status'){
+              const raw=typeof c.value==='function' ? c.value(row) : row[c.key];
+              const palette=statusPalette(raw);
+              const badgeW=Math.min(widths[i]-3,Math.max(13,safe(raw).length*2.25+5));
+              pdf.setFillColor(...palette.fill);
+              pdf.setDrawColor(...palette.border);
+              pdf.roundedRect(x+1.5,y+2,badgeW,5.5,1.8,1.8,'FD');
+              pdf.setTextColor(...palette.text);
+              pdf.setFont('helvetica','bold');
+              pdf.setFontSize(5.8);
+              pdf.text(safe(raw||'—'),x+1.5+badgeW/2,y+5.8,{align:'center'});
+            }else{
+              pdf.setTextColor(58,77,82);
+              pdf.setFont('helvetica',c.bold?'bold':'normal');
+              pdf.setFontSize(6.3);
+              pdf.text(cellLines[i].slice(0,options.maxLines||4),x+padX,y+4);
+            }
+            x+=widths[i];
+          });
+
+          y+=rowH;
+        });
+
+        y+=5;
+      };
+
+      const drawDoctorTypeBreakdown=(title,rows,itemLabel)=>{
+        const flatRows=[];
+        (rows||[]).forEach(row=>{
+          row.items.forEach(([name,value],index)=>{
+            flatRows.push({
+              doctor:index===0?row.doctor:'',
+              item:name,
+              qty:value,
+              share:`${percentOf(value,row.total)}%`,
+              total:index===0?row.total:''
+            });
+          });
+        });
+
+        drawTable(
+          title,
+          [
+            {key:'doctor',label:'Médico',width:70,bold:true},
+            {key:'item',label:itemLabel,width:120},
+            {key:'qty',label:'Quantidade',width:30},
+            {key:'share',label:'Participação',width:28},
+            {key:'total',label:'Total médico',width:25}
+          ],
+          flatRows,
+          {
+            subtitle:`Distribuição por médico e ${itemLabel.toLowerCase()}, de forma simples para leitura gerencial.`,
+            maxLines:2
+          }
+        );
+      };
+
+      const drawStatusTypeBreakdown=(groupTitle,statuses,byStatus,totalByStatus,itemLabel)=>{
+        statuses.forEach(status=>{
+          const rows=Object.entries(byStatus?.[status]||{})
+            .sort((a,b)=>b[1]-a[1])
+            .map(([name,value])=>({
+              name,
+              qty:value,
+              share:`${percentOf(value,totalByStatus?.[status]||0)}%`
+            }));
+
+          drawTable(
+            `${groupTitle.toUpperCase()} - ${safe(status).toUpperCase()} - POR ${itemLabel.toUpperCase()}`,
+            [
+              {key:'name',label:itemLabel,width:190,bold:true},
+              {key:'qty',label:'Quantidade',width:42},
+              {key:'share',label:'Participação',width:41}
+            ],
+            rows,
+            {
+              subtitle:`Total no status ${safe(status)}: ${totalByStatus?.[status]||0}. Distribuição detalhada por ${itemLabel.toLowerCase()}.`,
+              maxLines:2
+            }
+          );
+        });
+      };
+
+      // ======================================================
+      // PÁGINA 1 — RESUMO EXECUTIVO
+      // ======================================================
+      pageHeader('RELATORIO GERENCIAL COMPLETO',periodLabel);
+
+      pdf.setTextColor(38,58,65);
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(15);
+      pdf.text('Resultados e indicadores operacionais',margin,y);
+
+      pdf.setTextColor(112,128,133);
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(7.3);
+      pdf.text('Visao consolidada com situacao dos exames, cirurgias, pendencias e registros detalhados.',margin,y+5);
+      y+=11;
+
+      const filterBoxH=18;
+      pdf.setFillColor(248,250,250);
+      pdf.setDrawColor(222,230,232);
+      pdf.roundedRect(margin,y,contentWidth,filterBoxH,2,2,'FD');
+
+      const filterCols=[
+        ['Periodo',periodLabel],
+        ['Medico / cirurgiao',selectedDoctor],
+        ['Responsavel',selectedUser],
+        ['Status',selectedStatus]
+      ];
+      filterCols.forEach((f,i)=>{
+        const x=margin+4+i*(contentWidth/4);
+        pdf.setTextColor(126,139,143);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(5.8);
+        pdf.text(safe(f[0].toUpperCase()),x,y+5);
+        pdf.setTextColor(54,72,77);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(7);
+        pdf.text(split(f[1],contentWidth/4-9,7).slice(0,2),x,y+10);
+      });
+      y+=23;
+
+      drawMetricCards([
+        {label:'Pacientes unicos',value:resultSummary.uniquePatients,detail:'Pacientes identificados no periodo'},
+        {label:'Total de exames',value:resultSummary.totalEx,detail:`${resultSummary.realEx} realizados - ${resultSummary.exRate}% concluido`},
+        {label:'Total de cirurgias',value:resultSummary.totalSu,detail:`${resultSummary.realSu} realizadas - ${resultSummary.suRate}% concluido`},
+        {label:'Total operacional',value:resultSummary.totalEx+resultSummary.totalSu,detail:'Exames + procedimentos cirurgicos'}
+      ],4);
+
+      drawSection('SITUACAO OPERACIONAL','Separacao clara entre concluido, em aberto e cancelado.');
+
+      drawMetricCards([
+        {label:'Exames concluidos',value:resultSummary.realEx,detail:`${resultSummary.exRate}% do total`,fill:[237,246,240],border:[211,231,218],valueColor:[62,118,86]},
+        {label:'Exames em aberto',value:resultSummary.exOpen,detail:`${resultSummary.exAgendado} agendados + ${resultSummary.exPendente} pendentes`,fill:[255,247,229],border:[239,220,179],valueColor:[151,104,32]},
+        {label:'Cirurgias concluidas',value:resultSummary.realSu,detail:`${resultSummary.suRate}% do total`,fill:[237,246,240],border:[211,231,218],valueColor:[62,118,86]},
+        {label:'Cirurgias em aberto',value:resultSummary.suOpen,detail:`Solicitacao, pendente, autorizada ou agendada`,fill:[255,247,229],border:[239,220,179],valueColor:[151,104,32]}
+      ],4);
+
+      drawMetricCards([
+        {label:'Exames cancelados',value:resultSummary.exCancelado,detail:'Mantidos para leitura gerencial',fill:[251,238,238],border:[238,213,213],valueColor:[166,76,76]},
+        {label:'Cirurgias canceladas',value:resultSummary.suCancelada,detail:'Mantidas para leitura gerencial',fill:[251,238,238],border:[238,213,213],valueColor:[166,76,76]},
+        {label:'Financeiro pendente',value:resultSummary.paymentPending,detail:`${resultSummary.paymentPendingRate}% das cirurgias/procedimentos`,fill:[255,247,229],border:[239,220,179],valueColor:[151,104,32]},
+        {label:'Pago / convenio',value:resultSummary.paymentClosed,detail:'Procedimentos com situacao financeira fechada',fill:[237,246,240],border:[211,231,218],valueColor:[62,118,86]}
+      ],4);
+
+      const quickText=
+        `No periodo foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} procedimentos cirurgicos para ${resultSummary.uniquePatients} pacientes unicos. `+
+        `Nos exames, ${resultSummary.realEx} foram realizados, ${resultSummary.exOpen} permanecem em aberto e ${resultSummary.exCancelado} foram cancelados. `+
+        `Nas cirurgias, ${resultSummary.realSu} foram realizadas, ${resultSummary.suOpen} permanecem em fluxo operacional e ${resultSummary.suCancelada} foram canceladas. `+
+        `O exame de maior volume foi ${resultSummary.examTop?.[0]||'nao identificado'} e o procedimento cirurgico mais frequente foi ${resultSummary.surgTop?.[0]||'nao identificado'}.`;
+
+      ensure(24);
+      pdf.setFillColor(244,248,249);
+      pdf.setDrawColor(218,229,232);
+      const quickLines=split(quickText,contentWidth-8,7.3);
+      const quickH=Math.max(20,quickLines.length*3.5+10);
+      pdf.roundedRect(margin,y,contentWidth,quickH,2.5,2.5,'FD');
+      pdf.setTextColor(49,95,114);
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(7);
+      pdf.text('LEITURA RAPIDA',margin+4,y+5.5);
+      pdf.setTextColor(77,96,102);
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(7.3);
+      pdf.text(quickLines,margin+4,y+10.5);
+      y+=quickH+5;
+
+      // ======================================================
+      // TENDENCIA / CONVERSAO / PIZZA
+      // ======================================================
+      newPage('TENDENCIA, CONVERSAO E DISTRIBUICAO',periodLabel);
+
+      drawSection('COMPARATIVO COM O MES ANTERIOR',`Comparação de ${periodLabel} com ${monthLabel(advancedAnalytics.previousMonth)}.`);
+
+      drawMetricCards([
+        {
+          label:'Volume de exames',
+          value:`${advancedAnalytics.examVolumeDelta>=0?'+':''}${advancedAnalytics.examVolumeDelta}%`,
+          detail:`${advancedAnalytics.currentExamTotal} atual vs ${advancedAnalytics.previousExamTotal} anterior`,
+          fill:advancedAnalytics.examVolumeDelta>=0?[237,246,240]:[251,238,238],
+          valueColor:advancedAnalytics.examVolumeDelta>=0?[62,118,86]:[166,76,76]
+        },
+        {
+          label:'Volume de cirurgias',
+          value:`${advancedAnalytics.surgeryVolumeDelta>=0?'+':''}${advancedAnalytics.surgeryVolumeDelta}%`,
+          detail:`${advancedAnalytics.currentSurgeryTotal} atual vs ${advancedAnalytics.previousSurgeryTotal} anterior`,
+          fill:advancedAnalytics.surgeryVolumeDelta>=0?[237,246,240]:[251,238,238],
+          valueColor:advancedAnalytics.surgeryVolumeDelta>=0?[62,118,86]:[166,76,76]
+        },
+        {
+          label:'Conversao de exames',
+          value:`${advancedAnalytics.currentExamRate}%`,
+          detail:`${advancedAnalytics.examRateDelta>=0?'+':''}${advancedAnalytics.examRateDelta} p.p. vs mês anterior`
+        },
+        {
+          label:'Conversao de cirurgias',
+          value:`${advancedAnalytics.currentSurgeryRate}%`,
+          detail:`${advancedAnalytics.surgeryRateDelta>=0?'+':''}${advancedAnalytics.surgeryRateDelta} p.p. vs mês anterior`
+        }
+      ],4);
+
+      const volumeLine=makeLineChartImage(
+        'Evolucao mensal de volume',
+        advancedAnalytics.monthLabels,
+        [
+          {name:'Exames',values:advancedAnalytics.examTrend,color:'#315F72'},
+          {name:'Cirurgias',values:advancedAnalytics.surgeryTrend,color:'#4F8A6B'}
+        ],
+        false
+      );
+      const conversionLine=makeLineChartImage(
+        'Taxa de conversao / realizacao',
+        advancedAnalytics.monthLabels,
+        [
+          {name:'Exames',values:advancedAnalytics.examConversion,color:'#315F72'},
+          {name:'Cirurgias',values:advancedAnalytics.surgeryConversion,color:'#B9802B'}
+        ],
+        true
+      );
+
+      ensure(72);
+      pdf.addImage(volumeLine,'PNG',margin,y,132,59,undefined,'FAST');
+      pdf.addImage(conversionLine,'PNG',margin+141,y,132,59,undefined,'FAST');
+      y+=65;
+
+      const examDonut=makeDonutImage('Status dos exames',advancedAnalytics.examStatusPie);
+      const surgeryDonut=makeDonutImage('Status das cirurgias',advancedAnalytics.surgeryStatusPie);
+
+      ensure(68);
+      pdf.addImage(examDonut,'PNG',margin,y,132,62,undefined,'FAST');
+      pdf.addImage(surgeryDonut,'PNG',margin+141,y,132,62,undefined,'FAST');
+      y+=68;
+
+      // ======================================================
+      // PÁGINA 2 — EXAMES
+      // ======================================================
+      newPage('EXAMES - SITUACAO E DETALHAMENTO',periodLabel);
+
+      drawStatusPanel('Status dos exames',resultSummary.totalEx,[
+        {label:'Realizado',value:resultSummary.realEx},
+        {label:'Agendado',value:resultSummary.exAgendado},
+        {label:'Pendente',value:resultSummary.exPendente},
+        {label:'Cancelado',value:resultSummary.exCancelado}
+      ]);
+
+      drawSimpleRanking('Exames por tipo',countManyBy(dashboardExams,'exam_names'),7);
+
+      drawStatusTypeBreakdown(
+        'Exames',
+        ['Realizado','Agendado','Pendente','Cancelado'],
+        advancedAnalytics.examByStatusType,
+        advancedAnalytics.examStatusTotals,
+        'Tipo de exame'
+      );
+
+      drawDoctorTypeBreakdown(
+        'EXAMES POR MEDICO E TIPO',
+        advancedAnalytics.examByDoctor,
+        'Tipo de exame'
+      );
+
+      if(advancedAnalytics.examByIndication.length){
+        drawDoctorTypeBreakdown(
+          'INDICACOES DE EXAMES POR MEDICO',
+          advancedAnalytics.examByIndication,
+          'Tipo de exame indicado'
+        );
+      }
+
+      drawTable(
+        'DETALHAMENTO DOS EXAMES',
+        [
+          {key:'date',label:'Data',width:18,value:r=>brDate(r.date)},
+          {key:'patient',label:'Paciente',width:43,bold:true},
+          {key:'doctor',label:'Medico',width:31},
+          {key:'indicatedBy',label:'Indicado por',width:29,value:r=>r.indicatedBy||'—'},
+          {key:'exam',label:'Exame(s)',width:46},
+          {key:'status',label:'Status',width:22},
+          {key:'responsible',label:'Responsavel',width:23,value:r=>launchedName(r)},
+          {key:'obs',label:'Observacao',width:61}
+        ],
+        dashboardExams,
+        {subtitle:'Lista completa dos exames encontrados nos filtros atuais.',maxLines:3}
+      );
+
+      // ======================================================
+      // CIRURGIAS
+      // ======================================================
+      newPage('CIRURGIAS - SITUACAO E DETALHAMENTO',periodLabel);
+
+      drawStatusPanel('Status das cirurgias / procedimentos',resultSummary.totalSu,[
+        {label:'Realizada',value:resultSummary.realSu},
+        {label:'Agendada',value:resultSummary.suAgendada},
+        {label:'Autorizada',value:resultSummary.suAutorizada},
+        {label:'Pendente',value:resultSummary.suPendente},
+        {label:'Solicitacao',value:resultSummary.suSolicitacao},
+        {label:'Cancelada',value:resultSummary.suCancelada}
+      ]);
+
+      drawStatusPanel('Situacao financeira das cirurgias / procedimentos',resultSummary.totalSu,[
+        {label:'Pago',value:resultSummary.paymentCounts['Pago']||0},
+        {label:'Convenio',value:resultSummary.paymentCounts['Convênio']||0},
+        {label:'20% pago',value:resultSummary.paymentCounts['20% pago']||0},
+        {label:'Pendente',value:resultSummary.paymentCounts['Pendente']||0},
+        {label:'Nao informado',value:resultSummary.paymentCounts['Não informado']||0}
+      ]);
+
+      drawStatusTypeBreakdown(
+        'Cirurgias',
+        ['Realizada','Agendada','Autorizada','Pendente','Solicitação','Cancelada'],
+        advancedAnalytics.surgeryByStatusType,
+        advancedAnalytics.surgeryStatusTotals,
+        'Procedimento'
+      );
+
+      drawDoctorTypeBreakdown(
+        'CIRURGIAS POR CIRURGIAO E PROCEDIMENTO',
+        advancedAnalytics.surgeryByDoctor,
+        'Procedimento'
+      );
+
+      if(advancedAnalytics.surgeryByIndication.length){
+        drawDoctorTypeBreakdown(
+          'INDICACOES DE CIRURGIA POR MEDICO',
+          advancedAnalytics.surgeryByIndication,
+          'Procedimento indicado'
+        );
+      }
+
+      drawTable(
+        'DETALHAMENTO DAS CIRURGIAS',
+        [
+          {key:'date',label:'Data',width:16,value:r=>brDate(r.date)},
+          {key:'patient',label:'Paciente',width:35,bold:true},
+          {key:'doctor',label:'Cirurgiao',width:24},
+          {key:'indicatedBy',label:'Indicado por',width:24,value:r=>r.indicatedBy||'—'},
+          {key:'procedure',label:'Procedimento(s)',width:34},
+          {key:'eye',label:'Olho',width:14},
+          {key:'insurance',label:'Convenio',width:21,value:r=>r.insurance||'Particular'},
+          {key:'status',label:'Status',width:19},
+          {key:'payment',label:'Pagamento',width:20},
+          {key:'time',label:'Horario',width:14,value:r=>r.time||'—'},
+          {key:'responsible',label:'Responsavel',width:19,value:r=>launchedName(r)},
+          {key:'obs',label:'Observacao',width:33}
+        ],
+        dashboardSurgeries,
+        {subtitle:'Lista completa com status, pagamento, horario e observacoes.',maxLines:3}
+      );
+
+      // ======================================================
+      // PÁGINA FINAL — COMPLEMENTO GERENCIAL
+      // ======================================================
+      newPage('ANALISE COMPLEMENTAR',periodLabel);
+
+      drawSection('DESTAQUES DO PERIODO','Principais volumes encontrados apos a aplicacao dos filtros.');
+
+      drawMetricCards([
+        {label:'Exame com maior volume',value:resultSummary.examTop?.[1]||0,detail:resultSummary.examTop?.[0]||'Sem dados'},
+        {label:'Cirurgia com maior volume',value:resultSummary.surgTop?.[1]||0,detail:resultSummary.surgTop?.[0]||'Sem dados'},
+        {label:'Profissional com maior volume',value:resultSummary.doctorTop?.[1]||0,detail:resultSummary.doctorTop?.[0]||'Sem dados'},
+        {label:'Convenio com maior volume',value:resultSummary.insuranceTop?.[1]||0,detail:resultSummary.insuranceTop?.[0]||'Sem dados'}
+      ],4);
+
+      drawSimpleRanking(
+        'Lançamentos por responsavel',
+        Object.fromEntries(userRows.map(u=>[u.name,u.exams+u.surgeries])),
+        8
+      );
+
+      drawSimpleRanking(
+        'Cirurgias por convenio',
+        countWeightedBy(
+          dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),
+          'insuranceLabel',
+          'procedure_ids'
+        ),
+        8
+      );
+
+      drawSimpleRanking('Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),8);
+
+      // Rodape e numeracao em todas as paginas
+      const totalPages=pdf.getNumberOfPages();
+      for(let p=1;p<=totalPages;p++){
+        pdf.setPage(p);
+        const w=pdf.internal.pageSize.getWidth();
+        const h=pdf.internal.pageSize.getHeight();
+
+        pdf.setDrawColor(220,228,230);
+        pdf.line(margin,h-9,w-margin,h-9);
+
+        pdf.setTextColor(128,140,143);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(6.2);
+        pdf.text(`Emitido em ${safe(generatedAt)} - ${safe(currentAccessName||'Sistema')}`,margin,h-5);
+        pdf.text(`Pagina ${p} de ${totalPages}`,w-margin,h-5,{align:'right'});
+      }
+
+      pdf.save(`Oftalmocastro_Relatorio_Completo_${dashMonth||'todos-periodos'}.pdf`);
+    }catch(error){
+      console.error(error);
+      alert('Nao foi possivel gerar o PDF completo de resultados.');
     }finally{
       setExportingPdf(false);
     }
@@ -1239,17 +2460,9 @@ function App(){
         <div className="card">
           <div className="filters">
             <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
-            <input
-              type="search"
-              className="patient-name-filter"
-              value={filterPatient}
-              onChange={e=>setFilterPatient(e.target.value)}
-              placeholder="Buscar paciente pelo nome..."
-              aria-label="Buscar paciente pelo nome nos exames"
-            />
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterPatient('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredExams}
@@ -1259,16 +2472,16 @@ function App(){
               🗑 Excluir filtrados ({filteredExams.length})
             </button>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Médico</th><th>Exame</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Exame</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredExams.length?filteredExams.map(r=><tr key={r.id}>
             <td>{brDate(r.date)}</td><td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
-            <td>{r.doctor}</td><td>{r.exam}</td><td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
+            <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td>{r.exam}</td><td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
             <td><div className="row-actions">
               <button className="btn btn-edit-soft" onClick={()=>openEditExam(r)}>Editar</button>
               <button className="btn btn-danger-soft" onClick={()=>delExam(r.id)}>Excluir</button>
             </div></td>
-          </tr>):<tr><td colSpan="8" className="empty">Nenhum exame encontrado.</td></tr>}</tbody></table></div>
+          </tr>):<tr><td colSpan="9" className="empty">Nenhum exame encontrado.</td></tr>}</tbody></table></div>
         </div>
       </section>}
 
@@ -1276,24 +2489,16 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={totalItems(filteredSurgeries,'procedure_ids')}/><Kpi label="Agendadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Agendada')}/><Kpi label="Pendentes" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Pendente')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
         <div className="card">
           <div className="filters">
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
-            <input
-              type="search"
-              className="patient-name-filter"
-              value={sPatient}
-              onChange={e=>setSPatient(e.target.value)}
-              placeholder="Buscar paciente pelo nome..."
-              aria-label="Buscar paciente pelo nome nas cirurgias"
-            />
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
             <Select value={sProcedure} setValue={setSProcedure} options={procedures} first="Todos os procedimentos"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth('');setSPatient('');setSDoctor('');setSProcedure('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSProcedure('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredSurgeries}
@@ -1303,21 +2508,21 @@ function App(){
               🗑 Excluir filtrados ({filteredSurgeries.length})
             </button>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Cirurgião</th><th>Procedimento</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Cirurgião</th><th>Indicado por</th><th>Procedimento</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredSurgeries.length?filteredSurgeries.map(r=><tr key={r.id}>
             <td>{brDate(r.date)}{r.time&&<><br/><small>{r.time}</small></>}</td><td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
-            <td>{r.doctor}</td><td>{r.procedure}</td><td>{r.eye}</td><td>{r.insurance}</td>
+            <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td>{r.procedure}</td><td>{r.eye}</td><td>{r.insurance}</td>
             <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
             <td><div className="row-actions">
               <button className="btn btn-edit-soft" onClick={()=>openEditSurgery(r)}>Editar</button>
               <button className="btn btn-danger-soft" onClick={()=>delSurgery(r.id)}>Excluir</button>
             </div></td>
-          </tr>):<tr><td colSpan="10" className="empty">Nenhuma cirurgia encontrada.</td></tr>}</tbody></table></div>
+          </tr>):<tr><td colSpan="11" className="empty">Nenhuma cirurgia encontrada.</td></tr>}</tbody></table></div>
         </div>
       </section>}
 
-      {page==='resultados'&&<section className="results-export-root">
+      {page==='resultados'&&<section className="results-export-root" ref={resultsPageRef}>
         <div className="pdf-page-block" ref={pdfPage1Ref}>
           <div className="topbar results-header">
             <div>
@@ -1327,8 +2532,11 @@ function App(){
             </div>
             <div className="top-actions no-pdf">
               <button className="btn btn-light" onClick={exportExcel}>⬇ Excel</button>
+              <button className="btn btn-panel-pdf" onClick={exportResultsPagePDF} disabled={exportingPanelPdf}>
+                {exportingPanelPdf?'Gerando painel...':'⬇ PDF do painel'}
+              </button>
               <button className="btn btn-excel" onClick={exportResultsPDF} disabled={exportingPdf}>
-                {exportingPdf?'Gerando PDF...':'⬇ Exportar PDF • 3 páginas'}
+                {exportingPdf?'Gerando PDF detalhado...':'⬇ PDF detalhado'}
               </button>
             </div>
           </div>
@@ -1351,11 +2559,186 @@ function App(){
             <div className="analysis-card"><span>Total de lançamentos</span><strong>{resultSummary.totalEx+resultSummary.totalSu}</strong><small>exames + cirurgias</small></div>
           </div>
 
+          <div className="results-status-overview">
+            <div className="card status-summary-card">
+              <div className="status-summary-head">
+                <div>
+                  <span>EXAMES</span>
+                  <h3>Situação dos exames</h3>
+                  <p>Veja claramente o que foi concluído e o que ainda exige acompanhamento.</p>
+                </div>
+                <div className="status-rate success"><b>{resultSummary.exRate}%</b><small>realização</small></div>
+              </div>
+              <div className="status-breakdown-grid">
+                <div className="status-breakdown-item success"><span>Realizados</span><b>{resultSummary.realEx}</b><small>concluídos</small></div>
+                <div className="status-breakdown-item info"><span>Agendados</span><b>{resultSummary.exAgendado}</b><small>programados</small></div>
+                <div className="status-breakdown-item warning"><span>Pendentes</span><b>{resultSummary.exPendente}</b><small>precisam atenção</small></div>
+                <div className="status-breakdown-item danger"><span>Cancelados</span><b>{resultSummary.exCancelado}</b><small>fora do fluxo</small></div>
+              </div>
+              <div className="status-summary-foot"><b>{resultSummary.exOpen}</b> exame(s) ainda em aberto • {resultSummary.exOpenRate}% do total</div>
+            </div>
+
+            <div className="card status-summary-card">
+              <div className="status-summary-head">
+                <div>
+                  <span>CIRURGIAS</span>
+                  <h3>Situação das cirurgias</h3>
+                  <p>Acompanhe cada etapa até a realização ou cancelamento.</p>
+                </div>
+                <div className="status-rate success"><b>{resultSummary.suRate}%</b><small>realização</small></div>
+              </div>
+              <div className="status-breakdown-grid surgery">
+                <div className="status-breakdown-item success"><span>Realizadas</span><b>{resultSummary.realSu}</b><small>concluídas</small></div>
+                <div className="status-breakdown-item info"><span>Agendadas</span><b>{resultSummary.suAgendada}</b><small>com data</small></div>
+                <div className="status-breakdown-item info"><span>Autorizadas</span><b>{resultSummary.suAutorizada}</b><small>liberadas</small></div>
+                <div className="status-breakdown-item warning"><span>Pendentes</span><b>{resultSummary.suPendente}</b><small>precisam atenção</small></div>
+                <div className="status-breakdown-item neutral"><span>Solicitações</span><b>{resultSummary.suSolicitacao}</b><small>em análise</small></div>
+                <div className="status-breakdown-item danger"><span>Canceladas</span><b>{resultSummary.suCancelada}</b><small>fora do fluxo</small></div>
+              </div>
+              <div className="status-summary-foot"><b>{resultSummary.suOpen}</b> cirurgia(s) ainda em fluxo • {resultSummary.suOpenRate}% do total</div>
+            </div>
+          </div>
+
+          <div className="results-operational-strip">
+            <div><span>Financeiro em aberto</span><b>{resultSummary.paymentPending}</b><small>pendente, 20% pago ou não informado</small></div>
+            <div><span>Financeiro fechado</span><b>{resultSummary.paymentClosed}</b><small>pago ou convênio</small></div>
+            <div><span>Exame de maior volume</span><b className="text-value">{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamento(s)</small></div>
+            <div><span>Cirurgia de maior volume</span><b className="text-value">{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamento(s)</small></div>
+          </div>
+
           <div className="results-highlights">
             <div className="card insight-card"><span>Exame com maior volume</span><b>{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamentos</small></div>
             <div className="card insight-card"><span>Cirurgia com maior volume</span><b>{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamentos</small></div>
             <div className="card insight-card"><span>Profissional com maior volume</span><b>{resultSummary.doctorTop?.[0]||'Sem dados'}</b><small>{resultSummary.doctorTop?.[1]||0} registros</small></div>
           </div>
+
+          <div className="results-section analytics-section">
+            <div className="results-section-title">
+              <div>
+                <h3>Evolução e conversão</h3>
+                <p>Comparativo dos últimos 6 meses e variação em relação ao mês anterior.</p>
+              </div>
+              <div className="pill">Base: {monthLabel(advancedAnalytics.baseMonth)}</div>
+            </div>
+
+            <div className="comparison-cards">
+              <div className={`comparison-card ${advancedAnalytics.examVolumeDelta>=0?'positive':'negative'}`}>
+                <span>Volume de exames vs mês anterior</span>
+                <b>{advancedAnalytics.examVolumeDelta>=0?'↑':'↓'} {Math.abs(advancedAnalytics.examVolumeDelta)}%</b>
+                <small>{advancedAnalytics.currentExamTotal} neste mês • {advancedAnalytics.previousExamTotal} no anterior</small>
+              </div>
+              <div className={`comparison-card ${advancedAnalytics.surgeryVolumeDelta>=0?'positive':'negative'}`}>
+                <span>Volume de cirurgias vs mês anterior</span>
+                <b>{advancedAnalytics.surgeryVolumeDelta>=0?'↑':'↓'} {Math.abs(advancedAnalytics.surgeryVolumeDelta)}%</b>
+                <small>{advancedAnalytics.currentSurgeryTotal} neste mês • {advancedAnalytics.previousSurgeryTotal} no anterior</small>
+              </div>
+              <div className={`comparison-card ${advancedAnalytics.examRateDelta>=0?'positive':'negative'}`}>
+                <span>Conversão de exames</span>
+                <b>{advancedAnalytics.currentExamRate}%</b>
+                <small>{advancedAnalytics.examRateDelta>=0?'+':''}{advancedAnalytics.examRateDelta} p.p. vs mês anterior</small>
+              </div>
+              <div className={`comparison-card ${advancedAnalytics.surgeryRateDelta>=0?'positive':'negative'}`}>
+                <span>Conversão de cirurgias</span>
+                <b>{advancedAnalytics.currentSurgeryRate}%</b>
+                <small>{advancedAnalytics.surgeryRateDelta>=0?'+':''}{advancedAnalytics.surgeryRateDelta} p.p. vs mês anterior</small>
+              </div>
+            </div>
+
+            <div className="analytics-chart-grid">
+              <TrendLineChart
+                title="Evolução mensal de volume"
+                labels={advancedAnalytics.monthLabels}
+                series={[
+                  {name:'Exames',values:advancedAnalytics.examTrend,color:'#315f72'},
+                  {name:'Cirurgias',values:advancedAnalytics.surgeryTrend,color:'#4f8a6b'}
+                ]}
+              />
+              <TrendLineChart
+                title="Taxa de conversão / realização"
+                labels={advancedAnalytics.monthLabels}
+                percent
+                series={[
+                  {name:'Exames',values:advancedAnalytics.examConversion,color:'#315f72'},
+                  {name:'Cirurgias',values:advancedAnalytics.surgeryConversion,color:'#b9802b'}
+                ]}
+              />
+            </div>
+
+            <div className="analytics-chart-grid donut-grid">
+              <DonutChart title="Distribuição dos status dos exames" data={advancedAnalytics.examStatusPie} centerLabel="Exames"/>
+              <DonutChart title="Distribuição dos status das cirurgias" data={advancedAnalytics.surgeryStatusPie} centerLabel="Cirurgias"/>
+            </div>
+          </div>
+
+          <div className="results-section doctor-analysis-section">
+            <div className="results-section-title">
+              <div>
+                <h3>Produção por médico</h3>
+                <p>Veja exatamente quais exames e procedimentos estão associados a cada médico.</p>
+              </div>
+              <div className="pill">Médico × tipo</div>
+            </div>
+
+            <div className="doctor-analysis-grid">
+              <DoctorTypeMatrix
+                title="Exames por médico e tipo"
+                subtitle="Exemplo de leitura: Dr. Alexandre — 8 Mapeamentos, 5 Retinografias, 3 OCTs."
+                rows={advancedAnalytics.examByDoctor}
+                itemLabel="Exame"
+              />
+
+              <DoctorTypeMatrix
+                title="Cirurgias por cirurgião e procedimento"
+                subtitle="Exemplo de leitura: Dr. Daniel — 5 Cataratas, 7 Pterígios e demais procedimentos do período."
+                rows={advancedAnalytics.surgeryByDoctor}
+                itemLabel="Cirurgia"
+              />
+            </div>
+          </div>
+
+          <div className="results-section indication-analysis-section">
+            <div className="results-section-title">
+              <div>
+                <h3>Indicações por médico</h3>
+                <p>Quando o campo “Indicado por” estiver preenchido no lançamento, o sistema separa quem indicou de quem realizou.</p>
+              </div>
+              <div className="pill">Origem da indicação</div>
+            </div>
+
+            <div className="doctor-analysis-grid">
+              <DoctorTypeMatrix
+                title="Indicações de exames"
+                subtitle="Quantidade e tipo de exame indicado por cada médico."
+                rows={advancedAnalytics.examByIndication}
+                itemLabel="Exame indicado"
+              />
+
+              <DoctorTypeMatrix
+                title="Indicações de cirurgias"
+                subtitle="Quantidade e procedimento cirúrgico indicado por cada médico."
+                rows={advancedAnalytics.surgeryByIndication}
+                itemLabel="Cirurgia indicada"
+              />
+            </div>
+          </div>
+
+          <StatusTypeMatrix
+            title="Exames por status e por tipo"
+            subtitle="Dentro de cada status você vê exatamente quantos exames de cada tipo existem — por exemplo, quantas retinografias ou mapeamentos estão pendentes, realizados, agendados ou cancelados."
+            statuses={['Pendente','Realizado','Agendado','Cancelado']}
+            data={advancedAnalytics.examByStatusType}
+            totalByStatus={advancedAnalytics.examStatusTotals}
+            labelName="Exame"
+          />
+
+          <StatusTypeMatrix
+            title="Cirurgias por status e procedimento"
+            subtitle="Mostra quantos procedimentos de cada tipo estão em solicitação, pendentes, autorizados, agendados, realizados ou cancelados."
+            statuses={['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada']}
+            data={advancedAnalytics.surgeryByStatusType}
+            totalByStatus={advancedAnalytics.surgeryStatusTotals}
+            labelName="Procedimento"
+          />
 
           <div className="results-section results-section-first">
             <div className="results-section-title"><div><h3>Análise de exames</h3><p>Distribuição dos exames no período selecionado.</p></div><div className="pill">{resultSummary.totalEx} exames</div></div>
@@ -1517,21 +2900,21 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">07</div>
             <h3>Filtros</h3>
-            <p>Use os filtros no topo das páginas para localizar informações por <b>nome do paciente, mês, médico, exame ou procedimento</b>. A busca pelo paciente funciona enquanto você digita e ignora diferenças entre letras maiúsculas, minúsculas e acentos. Em Resultados também é possível filtrar por responsável e status.</p>
+            <p>Use os filtros no topo das páginas para localizar informações por <b>mês, médico, exame ou procedimento</b>. Em Resultados também é possível filtrar por responsável e status.</p>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">08</div>
             <h3>Resultados</h3>
-            <p>A página Resultados mostra pacientes únicos, volumes, taxas de realização, exames e cirurgias mais registrados, produção por médico, status, convênio e lançamentos por responsável.</p>
+            <p>A página Resultados mostra pacientes únicos, volumes, taxas de realização, exames e cirurgias mais registrados, produção por médico e tipo, indicações por médico quando informadas, status, convênio e lançamentos por responsável.</p>
             <div className="manual-note">Os indicadores acompanham os filtros selecionados. Assim você pode analisar um mês, profissional, responsável ou status específico.</div>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">09</div>
             <h3>Exportar resultados</h3>
-            <p>Na página Resultados, aplique os filtros desejados e clique em <b>Exportar PDF • 3 páginas</b> para gerar o relatório visual igual ao painel. O botão Excel continua disponível para os dados em planilha.</p>
-            <p>O PDF é gerado em <b>3 páginas</b>, seguindo a mesma organização visual do painel de Resultados. A exportação em Excel continua disponível separadamente para conferência dos dados.</p>
+            <p>Na página Resultados, aplique os filtros desejados e clique em <b>PDF completo</b>. O relatório mostra resumo executivo, indicadores, situação dos exames e cirurgias, pendências, cancelamentos, situação financeira, comparação com o mês anterior, gráficos de linha, gráficos de pizza e o detalhamento de cada tipo de exame/procedimento dentro de cada status.</p>
+            <p>O PDF é paginado automaticamente para que todos os exames e cirurgias filtrados apareçam com <b>paciente, médico/cirurgião, procedimento, status, responsável e observações</b>. A exportação em Excel continua disponível separadamente para conferência dos dados.</p>
           </article>
 
           <article className="card manual-card">
@@ -1579,6 +2962,800 @@ function App(){
       @media(max-width:700px){.exam-options{grid-template-columns:1fr}}
     `}</style>
     <style>{`
+      .btn-panel-pdf{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:8px;
+        color:#315f72;
+        border:1px solid #d5e4e9;
+        background:linear-gradient(180deg,#f3f8fa,#eaf3f6);
+        box-shadow:0 5px 14px rgba(49,95,114,.08);
+      }
+
+      .btn-panel-pdf:hover{
+        background:#dfedf2;
+        box-shadow:0 8px 18px rgba(49,95,114,.12);
+      }
+
+      .doctor-analysis-section,
+      .indication-analysis-section{
+        margin-top:28px;
+      }
+
+      .doctor-analysis-grid{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:15px;
+      }
+
+      .doctor-type-card{
+        min-width:0;
+        padding:19px;
+      }
+
+      .doctor-type-head{
+        margin-bottom:14px;
+      }
+
+      .doctor-type-head>div>span{
+        display:block;
+        color:var(--primary-2);
+        font-size:9px;
+        font-weight:900;
+        letter-spacing:.09em;
+      }
+
+      .doctor-type-head h3{
+        margin:4px 0;
+        color:var(--text);
+        font-size:17px;
+      }
+
+      .doctor-type-head p{
+        margin:0;
+        color:var(--muted);
+        font-size:10.5px;
+        line-height:1.5;
+      }
+
+      .doctor-type-grid{
+        display:grid;
+        gap:10px;
+      }
+
+      .doctor-type-section{
+        overflow:hidden;
+        border:1px solid var(--border);
+        border-radius:13px;
+        background:#fbfcfc;
+      }
+
+      .doctor-type-title{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        padding:11px 12px;
+        border-bottom:1px solid var(--border);
+        background:#fff;
+      }
+
+      .doctor-type-title b{
+        display:block;
+        color:#334b56;
+        font-size:12px;
+      }
+
+      .doctor-type-title small{
+        display:block;
+        margin-top:3px;
+        color:var(--muted);
+        font-size:8.5px;
+      }
+
+      .doctor-type-title strong{
+        color:var(--primary);
+        font-size:21px;
+      }
+
+      .doctor-type-list>div{
+        display:grid;
+        grid-template-columns:minmax(140px,1.15fr) minmax(80px,1fr) 30px 36px;
+        align-items:center;
+        gap:8px;
+        min-height:38px;
+        padding:7px 11px;
+        border-bottom:1px solid #edf1f2;
+      }
+
+      .doctor-type-list>div:last-child{
+        border-bottom:0;
+      }
+
+      .doctor-type-list span{
+        overflow:hidden;
+        color:#53636e;
+        font-size:9.5px;
+        font-weight:700;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+
+      .doctor-type-list b{
+        color:var(--primary);
+        font-size:10.5px;
+        text-align:right;
+      }
+
+      .doctor-type-list small{
+        color:var(--muted);
+        font-size:8.5px;
+        text-align:right;
+      }
+
+      .doctor-mini-bar{
+        height:6px;
+        overflow:hidden;
+        border-radius:999px;
+        background:#e9eef0;
+      }
+
+      .doctor-mini-bar i{
+        display:block;
+        height:100%;
+        border-radius:inherit;
+        background:linear-gradient(90deg,#315f72,#77a3b0);
+      }
+
+      .doctor-type-empty{
+        padding:26px 15px;
+        border:1px dashed #dbe4e7;
+        border-radius:12px;
+        color:var(--muted);
+        font-size:10.5px;
+        text-align:center;
+        background:#fafcfc;
+      }
+
+      @media(max-width:1100px){
+        .doctor-analysis-grid{
+          grid-template-columns:1fr;
+        }
+      }
+
+      @media(max-width:650px){
+        .doctor-type-list>div{
+          grid-template-columns:minmax(115px,1fr) 60px 28px 32px;
+        }
+      }
+    `}</style>
+
+    <style>{`
+      .analytics-section{
+        margin-top:30px;
+        padding-top:26px;
+        border-top:1px solid var(--border);
+      }
+
+      .comparison-cards{
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:11px;
+        margin:0 0 15px;
+      }
+
+      .comparison-card{
+        min-height:100px;
+        padding:14px 15px;
+        border:1px solid var(--border);
+        border-radius:14px;
+        background:#fff;
+        box-shadow:var(--shadow-sm);
+      }
+
+      .comparison-card span,
+      .comparison-card b,
+      .comparison-card small{
+        display:block;
+      }
+
+      .comparison-card span{
+        color:var(--muted);
+        font-size:9px;
+        font-weight:900;
+        text-transform:uppercase;
+        letter-spacing:.045em;
+      }
+
+      .comparison-card b{
+        margin:7px 0 4px;
+        color:var(--primary);
+        font-size:23px;
+        letter-spacing:-.03em;
+      }
+
+      .comparison-card small{
+        color:#87959a;
+        font-size:9.5px;
+        line-height:1.4;
+      }
+
+      .comparison-card.positive{
+        border-color:#d8e8dd;
+        background:linear-gradient(180deg,#fff,#f5faf7);
+      }
+
+      .comparison-card.positive b{color:var(--green)}
+
+      .comparison-card.negative{
+        border-color:#eedede;
+        background:linear-gradient(180deg,#fff,#fff7f7);
+      }
+
+      .comparison-card.negative b{color:var(--red)}
+
+      .analytics-chart-grid{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:15px;
+        margin-top:15px;
+      }
+
+      .viz-card{
+        min-width:0;
+        padding:18px;
+        border:1px solid var(--border);
+        border-radius:16px;
+        background:#fff;
+        box-shadow:var(--shadow-sm);
+      }
+
+      .viz-title{
+        color:var(--text);
+        font-size:14px;
+        font-weight:850;
+        letter-spacing:-.015em;
+      }
+
+      .viz-title-row{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:12px;
+        margin-bottom:7px;
+      }
+
+      .viz-title-row small{
+        display:block;
+        margin-top:3px;
+        color:var(--muted);
+        font-size:9px;
+      }
+
+      .line-legend{
+        display:flex;
+        flex-wrap:wrap;
+        justify-content:flex-end;
+        gap:9px;
+        color:var(--muted);
+        font-size:9px;
+      }
+
+      .line-legend span{
+        display:flex;
+        align-items:center;
+        gap:5px;
+      }
+
+      .line-legend i{
+        width:16px;
+        height:3px;
+        display:block;
+        border-radius:99px;
+      }
+
+      .trend-svg{
+        width:100%;
+        min-height:245px;
+        overflow:visible;
+      }
+
+      .trend-axis{
+        fill:#809096;
+        font-size:11px;
+      }
+
+      .trend-value{
+        fill:#53636e;
+        font-size:10px;
+        font-weight:800;
+      }
+
+      .donut-layout{
+        display:grid;
+        grid-template-columns:190px minmax(0,1fr);
+        align-items:center;
+        gap:15px;
+        margin-top:10px;
+      }
+
+      .donut-svg{
+        width:180px;
+        max-width:100%;
+        margin:auto;
+      }
+
+      .donut-total{
+        fill:#20313b;
+        font-size:21px;
+        font-weight:850;
+      }
+
+      .donut-label{
+        fill:#74838c;
+        font-size:9px;
+        font-weight:750;
+        text-transform:uppercase;
+      }
+
+      .donut-legend{
+        display:grid;
+        gap:8px;
+      }
+
+      .donut-legend>div{
+        display:grid;
+        grid-template-columns:10px minmax(0,1fr) auto auto;
+        align-items:center;
+        gap:7px;
+        padding:7px 0;
+        border-bottom:1px solid #eef2f3;
+      }
+
+      .donut-legend>div:last-child{
+        border-bottom:0;
+      }
+
+      .legend-dot{
+        width:9px;
+        height:9px;
+        display:block;
+        border-radius:50%;
+      }
+
+      .legend-name{
+        overflow:hidden;
+        color:#53636e;
+        font-size:10px;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+
+      .donut-legend b{
+        color:var(--text);
+        font-size:10px;
+      }
+
+      .donut-legend small{
+        min-width:34px;
+        color:var(--muted);
+        font-size:9px;
+        text-align:right;
+      }
+
+      .status-matrix-card{
+        margin-top:18px;
+        padding:20px;
+      }
+
+      .status-matrix-head{
+        margin-bottom:15px;
+      }
+
+      .status-matrix-head span{
+        display:block;
+        color:var(--primary-2);
+        font-size:9px;
+        font-weight:900;
+        letter-spacing:.09em;
+      }
+
+      .status-matrix-head h3{
+        margin:4px 0;
+        color:var(--text);
+        font-size:18px;
+      }
+
+      .status-matrix-head p{
+        max-width:900px;
+        margin:0;
+        color:var(--muted);
+        font-size:11px;
+        line-height:1.5;
+      }
+
+      .status-matrix-grid{
+        display:grid;
+        grid-template-columns:repeat(2,minmax(0,1fr));
+        gap:12px;
+      }
+
+      .status-matrix-section{
+        min-width:0;
+        overflow:hidden;
+        border:1px solid var(--border);
+        border-radius:13px;
+        background:#fbfcfc;
+      }
+
+      .status-matrix-title{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        padding:12px 13px;
+        border-bottom:1px solid var(--border);
+        background:#fff;
+      }
+
+      .status-matrix-title>div{
+        min-width:0;
+      }
+
+      .status-matrix-title small{
+        display:block;
+        margin-top:5px;
+        color:var(--muted);
+        font-size:8.5px;
+      }
+
+      .status-matrix-title>b{
+        min-width:38px;
+        color:var(--primary);
+        font-size:23px;
+        text-align:right;
+      }
+
+      .status-type-list{
+        display:grid;
+      }
+
+      .status-type-list>div{
+        display:grid;
+        grid-template-columns:minmax(135px,1.1fr) minmax(90px,1fr) 34px 38px;
+        align-items:center;
+        gap:8px;
+        min-height:42px;
+        padding:8px 12px;
+        border-bottom:1px solid #edf1f2;
+      }
+
+      .status-type-list>div:last-child{
+        border-bottom:0;
+      }
+
+      .status-type-list>div>span{
+        overflow:hidden;
+        color:#4d6069;
+        font-size:10px;
+        font-weight:700;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+
+      .status-type-list b{
+        color:var(--primary);
+        font-size:11px;
+        text-align:right;
+      }
+
+      .status-type-list small{
+        color:var(--muted);
+        font-size:9px;
+        text-align:right;
+      }
+
+      .mini-bar{
+        height:7px;
+        overflow:hidden;
+        border-radius:99px;
+        background:#e9eef0;
+      }
+
+      .mini-bar i{
+        display:block;
+        height:100%;
+        border-radius:inherit;
+        background:linear-gradient(90deg,var(--primary),#7ca6b2);
+      }
+
+      .status-type-empty{
+        padding:17px;
+        color:var(--muted);
+        font-size:10px;
+        text-align:center;
+      }
+
+      @media(max-width:1150px){
+        .comparison-cards{
+          grid-template-columns:1fr 1fr;
+        }
+
+        .analytics-chart-grid{
+          grid-template-columns:1fr;
+        }
+      }
+
+      @media(max-width:900px){
+        .status-matrix-grid{
+          grid-template-columns:1fr;
+        }
+      }
+
+      @media(max-width:650px){
+        .comparison-cards{
+          grid-template-columns:1fr;
+        }
+
+        .donut-layout{
+          grid-template-columns:1fr;
+        }
+
+        .status-type-list>div{
+          grid-template-columns:minmax(120px,1fr) 70px 30px 34px;
+        }
+      }
+    `}</style>
+
+    <style>{`
+      .results-status-overview{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:15px;
+        margin:0 0 18px;
+      }
+
+      .status-summary-card{
+        padding:19px;
+        box-shadow:var(--shadow-sm);
+      }
+
+      .status-summary-head{
+        display:flex;
+        align-items:flex-start;
+        justify-content:space-between;
+        gap:15px;
+        margin-bottom:15px;
+      }
+
+      .status-summary-head>div:first-child>span{
+        display:block;
+        margin-bottom:4px;
+        color:var(--primary-2);
+        font-size:9px;
+        font-weight:900;
+        letter-spacing:.1em;
+      }
+
+      .status-summary-head h3{
+        margin:0;
+        color:var(--text);
+        font-size:17px;
+      }
+
+      .status-summary-head p{
+        max-width:460px;
+        margin:4px 0 0;
+        color:var(--muted);
+        font-size:11px;
+        line-height:1.45;
+      }
+
+      .status-rate{
+        min-width:78px;
+        padding:9px 11px;
+        border:1px solid var(--border);
+        border-radius:12px;
+        text-align:center;
+        background:#f8fafb;
+      }
+
+      .status-rate b,
+      .status-rate small{
+        display:block;
+      }
+
+      .status-rate b{
+        color:var(--primary);
+        font-size:19px;
+      }
+
+      .status-rate small{
+        margin-top:2px;
+        color:var(--muted);
+        font-size:8px;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+      }
+
+      .status-rate.success{
+        border-color:#d8e9de;
+        background:var(--green-soft);
+      }
+
+      .status-rate.success b{
+        color:var(--green);
+      }
+
+      .status-breakdown-grid{
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:8px;
+      }
+
+      .status-breakdown-grid.surgery{
+        grid-template-columns:repeat(3,minmax(0,1fr));
+      }
+
+      .status-breakdown-item{
+        min-height:84px;
+        padding:11px 12px;
+        border:1px solid var(--border);
+        border-radius:12px;
+        background:#fafcfc;
+      }
+
+      .status-breakdown-item span,
+      .status-breakdown-item b,
+      .status-breakdown-item small{
+        display:block;
+      }
+
+      .status-breakdown-item span{
+        color:var(--muted);
+        font-size:9px;
+        font-weight:850;
+        text-transform:uppercase;
+        letter-spacing:.035em;
+      }
+
+      .status-breakdown-item b{
+        margin:5px 0 2px;
+        color:var(--text);
+        font-size:22px;
+      }
+
+      .status-breakdown-item small{
+        color:#8d999e;
+        font-size:9px;
+      }
+
+      .status-breakdown-item.success{
+        border-color:#dcecdf;
+        background:#f4faf6;
+      }
+
+      .status-breakdown-item.success b{color:var(--green)}
+
+      .status-breakdown-item.warning{
+        border-color:#efdfb9;
+        background:#fffaf0;
+      }
+
+      .status-breakdown-item.warning b{color:#a77423}
+
+      .status-breakdown-item.danger{
+        border-color:#efdede;
+        background:#fff6f6;
+      }
+
+      .status-breakdown-item.danger b{color:#aa5555}
+
+      .status-breakdown-item.info{
+        border-color:#dae8ec;
+        background:#f3f8fa;
+      }
+
+      .status-breakdown-item.info b{color:var(--primary)}
+
+      .status-breakdown-item.neutral{
+        border-color:#e4e7e9;
+        background:#f7f8f9;
+      }
+
+      .status-summary-foot{
+        margin-top:11px;
+        padding-top:10px;
+        border-top:1px solid #edf1f3;
+        color:var(--muted);
+        font-size:10.5px;
+      }
+
+      .status-summary-foot b{
+        color:var(--primary);
+      }
+
+      .results-operational-strip{
+        display:grid;
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:10px;
+        margin:0 0 18px;
+      }
+
+      .results-operational-strip>div{
+        min-height:82px;
+        padding:13px 14px;
+        border:1px solid var(--border);
+        border-radius:13px;
+        background:linear-gradient(180deg,#fff,#fafcfc);
+      }
+
+      .results-operational-strip span,
+      .results-operational-strip b,
+      .results-operational-strip small{
+        display:block;
+      }
+
+      .results-operational-strip span{
+        color:var(--muted);
+        font-size:9px;
+        font-weight:850;
+        text-transform:uppercase;
+      }
+
+      .results-operational-strip b{
+        margin:5px 0 2px;
+        color:var(--primary);
+        font-size:20px;
+      }
+
+      .results-operational-strip b.text-value{
+        overflow:hidden;
+        font-size:13px;
+        line-height:1.3;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+
+      .results-operational-strip small{
+        color:#8c999d;
+        font-size:9px;
+        line-height:1.35;
+      }
+
+      @media(max-width:1100px){
+        .results-status-overview{
+          grid-template-columns:1fr;
+        }
+
+        .results-operational-strip{
+          grid-template-columns:1fr 1fr;
+        }
+      }
+
+      @media(max-width:700px){
+        .status-breakdown-grid,
+        .status-breakdown-grid.surgery,
+        .results-operational-strip{
+          grid-template-columns:1fr 1fr;
+        }
+
+        .status-summary-head{
+          flex-direction:column;
+        }
+      }
+
+      @media(max-width:520px){
+        .status-breakdown-grid,
+        .status-breakdown-grid.surgery,
+        .results-operational-strip{
+          grid-template-columns:1fr;
+        }
+      }
+    `}</style>
+
+    <style>{`
       .pdf-page-block{display:block}
       .pdf-page-block + .pdf-page-block{margin-top:0}
       .pdf-continuation-grid{margin-top:24px}
@@ -1611,24 +3788,13 @@ function App(){
       }
     `}</style>
 
-    <style>{`
-      .patient-name-filter{
-        min-width:230px;
-      }
-      @media(max-width:900px){
-        .patient-name-filter{
-          width:100%;
-          min-width:0;
-        }
-      }
-    `}</style>
-
     <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle="Selecione quem está fazendo este lançamento."  onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
       <div className="form-grid">
         <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
         <Field label="WhatsApp"><input value={examForm.whatsapp} onChange={e=>setExamForm({...examForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
         <Field label="Médico"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+        <Field label="Indicado por (opcional)"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
         <Field label={editingExamId ? "Exame" : "Exames"} full>
           <div className="exam-multi-select">
             <div className="exam-multi-head">
@@ -1729,6 +3895,7 @@ function App(){
         <Field label="Paciente"><input value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
         <Field label="WhatsApp"><input value={sForm.whatsapp} onChange={e=>setSForm({...sForm,whatsapp:e.target.value})}/></Field>
         <Field label="Cirurgião"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+        <Field label="Indicado por (opcional)"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
         <Field label={editingSurgeryId ? "Procedimento" : "Procedimentos"} full>
           <div className="procedure-multi-select">
             <div className="procedure-multi-head">
