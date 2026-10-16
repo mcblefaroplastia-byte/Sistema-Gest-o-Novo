@@ -1495,83 +1495,782 @@ function App(){
 
   const exportResultsPagePDF = async ()=>{
     if(exportingPanelPdf) return;
-    const element=resultsPageRef.current;
-    if(!element) return alert('Não foi possível localizar a página de Resultados.');
-
     setExportingPanelPdf(true);
 
     try{
-      if(document.fonts?.ready) await document.fonts.ready;
-      await new Promise(resolve=>setTimeout(resolve,180));
+      const selectedDoctor=dashDoctor ? doctors.find(d=>d.id===dashDoctor)?.name || 'Não identificado' : 'Todos os médicos';
+      const selectedUser=dashUser || 'Todos os responsáveis';
+      const selectedStatus=dashStatus || 'Todos os status';
+      const periodLabel=monthLabel(dashMonth);
+      const generatedAt=new Date().toLocaleString('pt-BR');
 
-      const canvas=await html2canvas(element,{
-        scale:1.65,
-        useCORS:true,
-        backgroundColor:'#f4f7f8',
-        logging:false,
-        windowWidth:Math.max(document.documentElement.clientWidth,1440),
-        ignoreElements:el=>el.classList?.contains('no-pdf')
-      });
+      // Exportação nativa em A4: não captura a tela e não corta cards.
+      // O PDF contém somente os indicadores exibidos no modelo aprovado.
+      const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
+      const pageWidth=210;
+      const pageHeight=297;
+      const margin=10;
+      const contentWidth=pageWidth-(margin*2);
+      const footerY=289;
 
-      const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
-      const pageWidth=297;
-      const pageHeight=210;
-      const margin=7;
-      const footerSpace=7;
-      const usableWidth=pageWidth-(margin*2);
-      const usableHeight=pageHeight-(margin*2)-footerSpace;
+      const C={
+        bg:[253,247,243],
+        paper:[255,255,255],
+        primary:[44,96,151],
+        primaryDark:[38,80,120],
+        teal:[53,111,128],
+        teal2:[104,159,173],
+        lime:[201,210,139],
+        text:[35,58,68],
+        muted:[111,129,137],
+        border:[218,229,233],
+        soft:[246,250,251],
+        blueSoft:[236,245,248],
+        green:[73,137,102],
+        greenSoft:[236,247,240],
+        yellow:[184,128,35],
+        yellowSoft:[255,247,228],
+        red:[181,82,82],
+        redSoft:[252,238,238]
+      };
 
-      const sliceHeightPx=Math.max(1,Math.floor(canvas.width*(usableHeight/usableWidth)));
-      const totalPages=Math.ceil(canvas.height/sliceHeightPx);
+      const safe=value=>String(value??'')
+        .replace(/•/g,'-')
+        .replace(/[“”]/g,'"')
+        .replace(/[‘’]/g,"'")
+        .replace(/…/g,'...')
+        .replace(/[^\x00-\xFF]/g,'');
 
-      for(let pageIndex=0;pageIndex<totalPages;pageIndex++){
-        const sourceY=pageIndex*sliceHeightPx;
-        const currentSliceHeight=Math.min(sliceHeightPx,canvas.height-sourceY);
+      const split=(value,width,size=7)=>{
+        pdf.setFontSize(size);
+        return pdf.splitTextToSize(safe(value||'—'),width);
+      };
 
-        const slice=document.createElement('canvas');
-        slice.width=canvas.width;
-        slice.height=currentSliceHeight;
+      // Mantém textos sempre dentro da área disponível.
+      // Reduz levemente a fonte e, se ainda necessário, aplica reticências.
+      const fitText=(value,maxWidth,size=6,minSize=4.2)=>{
+        const raw=safe(value||'—');
+        let fontSize=size;
+        pdf.setFontSize(fontSize);
+        while(fontSize>minSize && pdf.getTextWidth(raw)>maxWidth){
+          fontSize-=0.2;
+          pdf.setFontSize(fontSize);
+        }
+        if(pdf.getTextWidth(raw)<=maxWidth) return {text:raw,size:fontSize};
+        let text=raw;
+        while(text.length>1 && pdf.getTextWidth(`${text}…`)>maxWidth){
+          text=text.slice(0,-1);
+        }
+        return {text:`${text}…`,size:fontSize};
+      };
 
-        const ctx=slice.getContext('2d');
-        ctx.fillStyle='#f4f7f8';
-        ctx.fillRect(0,0,slice.width,slice.height);
-        ctx.drawImage(
-          canvas,
-          0,sourceY,canvas.width,currentSliceHeight,
-          0,0,canvas.width,currentSliceHeight
-        );
+      const statusPalette=status=>{
+        const s=String(status||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+        if(s.includes('realiz')) return {fill:C.greenSoft,text:C.green};
+        if(s.includes('cancel')) return {fill:C.redSoft,text:C.red};
+        if(s.includes('pendent')) return {fill:C.yellowSoft,text:C.yellow};
+        if(s.includes('solicit')) return {fill:[244,244,247],text:[105,106,120]};
+        if(s.includes('autoriz')) return {fill:C.blueSoft,text:C.primary};
+        if(s.includes('agend')) return {fill:C.blueSoft,text:C.teal};
+        return {fill:C.soft,text:C.primary};
+      };
 
-        const img=slice.toDataURL('image/jpeg',0.94);
-        const imgHeight=(currentSliceHeight/canvas.width)*usableWidth;
+      const drawDots=()=>{
+        pdf.setFillColor(...C.lime);
+        for(let row=0;row<8;row++){
+          for(let col=0;col<3;col++){
+            pdf.circle(3.5+col*3,64+row*5,0.45,'F');
+            pdf.circle(pageWidth-3.5-col*3,64+row*5,0.45,'F');
+          }
+        }
+      };
 
-        if(pageIndex>0) pdf.addPage('a4','landscape');
-
-        pdf.setFillColor(244,247,248);
+      const pageHeader=(title,subtitle='')=>{
+        pdf.setFillColor(...C.bg);
         pdf.rect(0,0,pageWidth,pageHeight,'F');
-        pdf.addImage(img,'JPEG',margin,margin,usableWidth,imgHeight,undefined,'FAST');
+        drawDots();
 
-        pdf.setDrawColor(220,228,230);
-        pdf.line(margin,pageHeight-8,pageWidth-margin,pageHeight-8);
-        pdf.setTextColor(116,132,138);
+        // Marca fixa no canto esquerdo.
+        pdf.setTextColor(...C.primaryDark);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(11);
+        pdf.text('OFTALMOCASTRO',margin,16);
+        pdf.setTextColor(...C.muted);
         pdf.setFont('helvetica','normal');
-        pdf.setFontSize(6.5);
-        pdf.text(
-          `Oftalmocastro - Resultados - ${monthLabel(dashMonth)}`,
-          margin,
-          pageHeight-4.5
-        );
-        pdf.text(
-          `Página ${pageIndex+1} de ${totalPages}`,
-          pageWidth-margin,
-          pageHeight-4.5,
-          {align:'right'}
-        );
+        pdf.setFontSize(6.1);
+        pdf.text('GESTÃO DE EXAMES E CIRURGIAS',margin,21);
+
+        // Faixa de título sempre contida no A4, sem estourar ou deformar.
+        const boxW=92;
+        const boxX=pageWidth-margin-boxW;
+        pdf.setFillColor(...C.lime);
+        pdf.roundedRect(boxX,8,boxW,23,7,7,'F');
+
+        let titleSize=13.2;
+        let titleLines=[];
+        while(titleSize>=10.4){
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(titleSize);
+          titleLines=pdf.splitTextToSize(safe(title),boxW-12);
+          if(titleLines.length<=2) break;
+          titleSize-=0.4;
+        }
+        titleLines=titleLines.slice(0,2);
+        pdf.setTextColor(...C.primary);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(titleSize);
+        const titleStartY=titleLines.length===1?20:15.5;
+        pdf.text(titleLines,boxX+boxW-6,titleStartY,{align:'right',lineHeightFactor:1.0});
+
+        pdf.setFillColor(...C.primary);
+        pdf.rect(boxX,27,boxW,8,'F');
+        pdf.setTextColor(255,255,255);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(6.6);
+        pdf.text('OFTALMOCASTRO',boxX+boxW-6,32.3,{align:'right'});
+
+        if(subtitle){
+          pdf.setTextColor(...C.muted);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(6.0);
+          const subtitleLines=split(subtitle,contentWidth,6.0).slice(0,2);
+          pdf.text(subtitleLines,margin,40.8,{lineHeightFactor:1.05});
+        }
+      };
+
+      const footer=(page,total)=>{
+        pdf.setDrawColor(...C.border);
+        pdf.line(margin,footerY-2,pageWidth-margin,footerY-2);
+        pdf.setTextColor(...C.muted);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(5.4);
+        pdf.text(`Período: ${safe(periodLabel)}  |  Gerado em ${safe(generatedAt)}`,margin,footerY+1.5);
+        pdf.text(`Página ${page} de ${total}`,pageWidth-margin,footerY+1.5,{align:'right'});
+      };
+
+      const drawMetricCard=(x,y,w,h,label,value,detail='',accent='blue')=>{
+        const accentColor=accent==='green'?C.green:accent==='yellow'?C.yellow:C.primary;
+        const fill=accent==='green'?C.greenSoft:accent==='yellow'?C.yellowSoft:C.paper;
+        pdf.setFillColor(...fill);
+        pdf.setDrawColor(...C.border);
+        pdf.roundedRect(x,y,w,h,3,3,'FD');
+
+        // Pequena faixa lateral ajuda a leitura e mantém todos os cards visualmente alinhados.
+        pdf.setFillColor(...accentColor);
+        pdf.roundedRect(x+1.4,y+3,1.2,h-6,0.6,0.6,'F');
+
+        pdf.setTextColor(...C.muted);
+        pdf.setFont('helvetica','bold');
+        const labelFit=fitText(String(label).toUpperCase(),w-10,5.0,4.1);
+        pdf.setFontSize(labelFit.size);
+        pdf.text(labelFit.text,x+4.2,y+5.7);
+
+        pdf.setTextColor(...accentColor);
+        pdf.setFont('helvetica','bold');
+        const valueFit=fitText(value,w-10,14.8,9.2);
+        pdf.setFontSize(valueFit.size);
+        pdf.text(valueFit.text,x+4.2,y+14.3);
+
+        if(detail){
+          pdf.setTextColor(...C.muted);
+          pdf.setFont('helvetica','normal');
+          pdf.setFontSize(4.8);
+          const lines=split(detail,w-9,4.8).slice(0,2);
+          pdf.text(lines,x+4.2,y+18.8,{lineHeightFactor:1.05});
+        }
+      };
+
+      const drawStatusCard=(x,y,w,h,title,rate,items,openText)=>{
+        pdf.setFillColor(...C.paper);
+        pdf.setDrawColor(...C.border);
+        pdf.roundedRect(x,y,w,h,3,3,'FD');
+
+        pdf.setTextColor(...C.primary);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(5.0);
+        pdf.text(safe(title.split(' ')[0]).toUpperCase(),x+4,y+5.4);
+
+        const titleFit=fitText(title,w-29,8.4,6.2);
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(titleFit.size);
+        pdf.text(titleFit.text,x+4,y+11.2);
+
+        pdf.setFillColor(...C.greenSoft);
+        pdf.setDrawColor(215,233,221);
+        pdf.roundedRect(x+w-20,y+3.5,16,11.5,2,2,'FD');
+        pdf.setTextColor(...C.green);
+        pdf.setFont('helvetica','bold');
+        const rateFit=fitText(`${rate}%`,13,9.0,7.0);
+        pdf.setFontSize(rateFit.size);
+        pdf.text(rateFit.text,x+w-12,y+8.7,{align:'center'});
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(3.9);
+        pdf.text('REALIZAÇÃO',x+w-12,y+12.1,{align:'center'});
+
+        // Reserva uma faixa exclusiva para a observação inferior. Assim os status
+        // nunca encostam ou passam por cima do texto de "em aberto".
+        const noteH=openText?10:3;
+        const bodyTop=y+18;
+        const bodyBottom=y+h-noteH-2;
+        const bodyH=Math.max(12,bodyBottom-bodyTop);
+        const cols=items.length>4?3:2;
+        const rows=Math.ceil(items.length/cols);
+        const gapX=2;
+        const gapY=2;
+        const innerW=w-8;
+        const cellW=(innerW-gapX*(cols-1))/cols;
+        const cellH=(bodyH-gapY*(rows-1))/Math.max(rows,1);
+
+        items.forEach((item,i)=>{
+          const row=Math.floor(i/cols);
+          const col=i%cols;
+          const cx=x+4+col*(cellW+gapX);
+          const cy=bodyTop+row*(cellH+gapY);
+          const pal=statusPalette(item.label);
+          pdf.setFillColor(...pal.fill);
+          pdf.setDrawColor(...C.border);
+          pdf.roundedRect(cx,cy,cellW,cellH,1.8,1.8,'FD');
+
+          const labelFit=fitText(String(item.label).toUpperCase(),cellW-5,4.6,3.8);
+          pdf.setTextColor(...pal.text);
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(labelFit.size);
+          pdf.text(labelFit.text,cx+2.4,cy+4.5);
+
+          pdf.setFontSize(Math.max(8.2,Math.min(10.2,cellH*.62)));
+          pdf.text(String(item.value),cx+2.4,cy+10.3);
+
+          if(item.detail && cellH>=13){
+            const detailFit=fitText(item.detail,cellW-5,4.0,3.5);
+            pdf.setTextColor(...C.muted);
+            pdf.setFont('helvetica','normal');
+            pdf.setFontSize(detailFit.size);
+            pdf.text(detailFit.text,cx+2.4,cy+cellH-2.4);
+          }
+        });
+
+        if(openText){
+          const noteY=y+h-noteH;
+          pdf.setDrawColor(...C.border);
+          pdf.line(x+4,noteY,x+w-4,noteY);
+          pdf.setTextColor(...C.muted);
+          pdf.setFont('helvetica','normal');
+          const noteFit=fitText(openText,w-8,4.8,4.0);
+          pdf.setFontSize(noteFit.size);
+          pdf.text(noteFit.text,x+4,noteY+5.5);
+        }
+      };
+
+      const makeDonut=(data,centerLabel)=>{
+        const canvas=document.createElement('canvas');
+        canvas.width=720;
+        canvas.height=420;
+        const ctx=canvas.getContext('2d');
+        ctx.fillStyle='#FFFFFF';
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        const entries=Object.entries(data||{}).filter(([,v])=>Number(v)>0).slice(0,6);
+        const total=entries.reduce((s,[,v])=>s+Number(v||0),0);
+        const colors=['#4F8966','#386C7D','#C48926','#B85C5C','#7A6F9B','#6B8F9B'];
+
+        if(!total){
+          ctx.fillStyle='#74838C';
+          ctx.font='18px Arial';
+          ctx.textAlign='center';
+          ctx.fillText('Sem dados para o período.',360,210);
+          return canvas.toDataURL('image/png');
+        }
+
+        const cx=168,cy=210,r=108,inner=68;
+        let start=-Math.PI/2;
+        entries.forEach(([,value],i)=>{
+          const angle=(Number(value)/total)*Math.PI*2;
+          ctx.beginPath();
+          ctx.moveTo(cx,cy);
+          ctx.arc(cx,cy,r,start,start+angle);
+          ctx.closePath();
+          ctx.fillStyle=colors[i%colors.length];
+          ctx.fill();
+          start+=angle;
+        });
+
+        ctx.beginPath();
+        ctx.arc(cx,cy,inner,0,Math.PI*2);
+        ctx.fillStyle='#fff';
+        ctx.fill();
+        ctx.fillStyle='#20313B';
+        ctx.font='700 40px Arial';
+        ctx.textAlign='center';
+        ctx.fillText(String(total),cx,cy-4);
+        ctx.fillStyle='#74838C';
+        ctx.font='14px Arial';
+        ctx.fillText(centerLabel,cx,cy+23);
+
+        const legendX=350;
+        const rightX=685;
+        const startY=74;
+        const rowStep=entries.length<=4?64:52;
+        entries.forEach(([label,value],i)=>{
+          const ly=startY+i*rowStep;
+          ctx.fillStyle=colors[i%colors.length];
+          ctx.beginPath();
+          ctx.arc(legendX,ly,7,0,Math.PI*2);
+          ctx.fill();
+
+          const raw=String(label);
+          const legendLabel=raw.length>23?`${raw.slice(0,22)}…`:raw;
+          ctx.fillStyle='#53636E';
+          ctx.font='15px Arial';
+          ctx.textAlign='left';
+          ctx.fillText(legendLabel,legendX+19,ly+5);
+
+          ctx.fillStyle='#20313B';
+          ctx.font='700 15px Arial';
+          ctx.textAlign='right';
+          ctx.fillText(String(value),rightX-50,ly+5);
+          ctx.fillStyle='#7A8A90';
+          ctx.font='13px Arial';
+          ctx.fillText(`${percentOf(value,total)}%`,rightX,ly+5);
+        });
+
+        return canvas.toDataURL('image/png');
+      };
+
+      const drawDonutCard=(x,y,w,h,title,data,centerLabel)=>{
+        pdf.setFillColor(...C.paper);
+        pdf.setDrawColor(...C.border);
+        pdf.roundedRect(x,y,w,h,3,3,'FD');
+
+        const titleFit=fitText(title,w-8,7.1,5.6);
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(titleFit.size);
+        pdf.text(titleFit.text,x+4,y+6.6);
+
+        const img=makeDonut(data,centerLabel);
+        const sourceRatio=720/420;
+        const availableW=w-8;
+        const availableH=h-15;
+        let imgW=availableW;
+        let imgH=imgW/sourceRatio;
+        if(imgH>availableH){
+          imgH=availableH;
+          imgW=imgH*sourceRatio;
+        }
+        const imgX=x+(w-imgW)/2;
+        const imgY=y+11+(availableH-imgH)/2;
+        // Mantém a proporção original do gráfico. Nada fica esticado ou "torto".
+        pdf.addImage(img,'PNG',imgX,imgY,imgW,imgH,undefined,'FAST');
+      };
+
+      const drawHighlight=(x,y,w,h,label,name,value)=>{
+        pdf.setFillColor(...C.paper);
+        pdf.setDrawColor(...C.border);
+        pdf.roundedRect(x,y,w,h,3,3,'FD');
+        pdf.setFillColor(...C.teal2);
+        pdf.roundedRect(x+1.5,y+3,1.2,h-6,0.6,0.6,'F');
+
+        pdf.setTextColor(...C.muted);
+        pdf.setFont('helvetica','bold');
+        const labelFit=fitText(String(label).toUpperCase(),w-10,4.6,3.9);
+        pdf.setFontSize(labelFit.size);
+        pdf.text(labelFit.text,x+4.2,y+5.4);
+
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','bold');
+        const nameFit=fitText(name||'Sem dados',w-10,7.1,5.2);
+        pdf.setFontSize(nameFit.size);
+        pdf.text(nameFit.text,x+4.2,y+11.5);
+
+        const valueText=`${value||0} ${Number(value)===1?'registro':'registros'}`;
+        const valueFit=fitText(valueText,w-10,5.3,4.3);
+        pdf.setTextColor(...C.primary);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(valueFit.size);
+        pdf.text(valueFit.text,x+4.2,y+17.5);
+      };
+
+      const drawBarRow=(x,y,w,label,value,max,total=null,fontSize=5.2,rowH=4.3)=>{
+        // Layout em uma única linha: nome | barra | quantidade/percentual.
+        // Evita que percentuais ou nomes invadam a linha seguinte.
+        const labelW=w*0.48;
+        const valueW=total ? 18 : 10;
+        const gap=3;
+        const barX=x+labelW+gap;
+        const barW=Math.max(8,w-labelW-valueW-gap*2);
+        const textY=y+rowH*0.67;
+
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','normal');
+        const labelFit=fitText(label,labelW-2,fontSize,3.8);
+        pdf.setFontSize(labelFit.size);
+        pdf.text(labelFit.text,x,textY);
+
+        const barY=y+Math.max(0.7,rowH*0.37);
+        pdf.setFillColor(232,239,241);
+        pdf.roundedRect(barX,barY,barW,2.2,1,1,'F');
+        if(Number(value)>0){
+          pdf.setFillColor(...C.teal);
+          pdf.roundedRect(barX,barY,Math.max(1,(Number(value)/Math.max(Number(max)||1,1))*barW),2.2,1,1,'F');
+        }
+
+        const valueText=total ? `${value} · ${percentOf(value,total)}%` : String(value);
+        pdf.setTextColor(...C.primaryDark);
+        pdf.setFont('helvetica','bold');
+        const valueFit=fitText(valueText,valueW,fontSize,3.8);
+        pdf.setFontSize(valueFit.size);
+        pdf.text(valueFit.text,x+w,textY,{align:'right'});
+      };
+
+      // Compacta rankings sem perder o total: quando houver muitas linhas,
+      // mantém as principais e soma o restante em "Outros".
+      // Isso evita que conteúdo ultrapasse os cards no A4.
+      const compactEntries=(entries,maxRows=5,otherLabel='Outros')=>{
+        const ordered=[...(entries||[])].sort((a,b)=>Number(b[1]||0)-Number(a[1]||0));
+        if(ordered.length<=maxRows) return ordered;
+        const keep=Math.max(1,maxRows-1);
+        const visible=ordered.slice(0,keep);
+        const remainder=ordered.slice(keep);
+        const remainderTotal=remainder.reduce((sum,[,value])=>sum+Number(value||0),0);
+        return [...visible,[`${otherLabel} (${remainder.length})`,remainderTotal]];
+      };
+
+      const compactDoctorRows=(rows,maxDoctors=8,maxItems=5)=>{
+        const ordered=[...(rows||[])].sort((a,b)=>Number(b.total||0)-Number(a.total||0));
+        const normalize=row=>({
+          ...row,
+          items:compactEntries(row.items||[],maxItems,'Outros')
+        });
+        if(ordered.length<=maxDoctors) return ordered.map(normalize);
+
+        const keep=Math.max(1,maxDoctors-1);
+        const visible=ordered.slice(0,keep).map(normalize);
+        const remainder=ordered.slice(keep);
+        const itemTotals={};
+        let total=0;
+        remainder.forEach(row=>{
+          total+=Number(row.total||0);
+          (row.items||[]).forEach(([name,value])=>{
+            itemTotals[name]=(itemTotals[name]||0)+Number(value||0);
+          });
+        });
+        visible.push({
+          doctor:`Outros médicos (${remainder.length})`,
+          total,
+          items:compactEntries(Object.entries(itemTotals),maxItems,'Outros')
+        });
+        return visible;
+      };
+
+      const doctorColumnHeight=(rows,rowH=3.7,headH=6.7,gap=1.4)=>
+        10+(rows||[]).reduce((sum,row)=>sum+headH+Math.max(1,row.items?.length||0)*rowH+gap,0);
+
+      const drawDoctorColumn=(x,y,w,h,title,rows,itemLabel)=>{
+        pdf.setFillColor(...C.paper);pdf.setDrawColor(...C.border);pdf.roundedRect(x,y,w,h,3,3,'FD');
+        pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');
+        const titleFit=fitText(title,w-8,7.5,5.8);
+        pdf.setFontSize(titleFit.size);pdf.text(titleFit.text,x+4,y+7);
+
+        const list=compactDoctorRows(rows,8,5);
+        if(!list.length){
+          pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(6);pdf.text('Sem dados para os filtros atuais.',x+4,y+16);return;
+        }
+
+        const available=h-15;
+        const raw=doctorColumnHeight(list)-10;
+        const scale=Math.min(1,available/Math.max(raw,1));
+        const rowH=Math.max(3.15,3.9*scale);
+        const headH=Math.max(5.7,7.0*scale);
+        const gap=Math.max(1.0,1.5*scale);
+        const font=Math.max(4.2,5.0*scale);
+        let cy=y+11;
+
+        list.forEach(row=>{
+          const items=row.items||[];
+          const groupH=headH+Math.max(1,items.length)*rowH+gap;
+          pdf.setFillColor(...C.soft);pdf.setDrawColor(...C.border);pdf.roundedRect(x+3,cy,w-6,groupH-gap,2,2,'FD');
+
+          const doctorName=fitText(row.doctor,w-27,font+0.7,4.2);
+          pdf.setTextColor(...C.text);pdf.setFont('helvetica','bold');pdf.setFontSize(doctorName.size);
+          pdf.text(doctorName.text,x+6,cy+headH*.64);
+          pdf.setTextColor(...C.primary);pdf.setFontSize(font+1.1);
+          pdf.text(String(row.total),x+w-6,cy+headH*.64,{align:'right'});
+
+          let iy=cy+headH;
+          if(items.length){
+            const max=Math.max(...items.map(([,v])=>Number(v)||0),1);
+            items.forEach(([name,value])=>{
+              drawBarRow(x+6,iy,w-12,name,value,max,row.total,font,rowH);
+              iy+=rowH;
+            });
+          }else{
+            pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(font);
+            pdf.text(`Sem ${itemLabel.toLowerCase()}`,x+6,iy+2.5);
+          }
+          cy+=groupH;
+        });
+      };
+
+      const statusColumnHeight=(statuses,byStatus,rowH=3.65,headH=6.6,gap=1.35)=>
+        10+statuses.reduce((sum,status)=>{
+          const compact=compactEntries(Object.entries(byStatus?.[status]||{}),5,'Outros');
+          return sum+headH+Math.max(1,compact.length)*rowH+gap;
+        },0);
+
+      const drawStatusColumn=(x,y,w,h,title,statuses,byStatus,totalByStatus,itemLabel)=>{
+        pdf.setFillColor(...C.paper);pdf.setDrawColor(...C.border);pdf.roundedRect(x,y,w,h,3,3,'FD');
+        pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');
+        const titleFit=fitText(title,w-8,7.5,5.8);
+        pdf.setFontSize(titleFit.size);pdf.text(titleFit.text,x+4,y+7);
+
+        const available=h-15;
+        const raw=statusColumnHeight(statuses,byStatus)-10;
+        const scale=Math.min(1,available/Math.max(raw,1));
+        const rowH=Math.max(3.1,3.85*scale);
+        const headH=Math.max(5.6,6.9*scale);
+        const gap=Math.max(1.0,1.45*scale);
+        const font=Math.max(4.15,4.95*scale);
+        let cy=y+11;
+
+        statuses.forEach(status=>{
+          const entries=compactEntries(Object.entries(byStatus?.[status]||{}),5,'Outros');
+          const total=totalByStatus?.[status]||0;
+          const groupH=headH+Math.max(1,entries.length)*rowH+gap;
+          const pal=statusPalette(status);
+          pdf.setFillColor(...pal.fill);pdf.setDrawColor(...C.border);pdf.roundedRect(x+3,cy,w-6,groupH-gap,2,2,'FD');
+
+          const statusFit=fitText(status,w-27,font+0.7,4.2);
+          pdf.setTextColor(...pal.text);pdf.setFont('helvetica','bold');pdf.setFontSize(statusFit.size);
+          pdf.text(statusFit.text,x+6,cy+headH*.64);
+          pdf.setFontSize(font+1.1);pdf.text(String(total),x+w-6,cy+headH*.64,{align:'right'});
+
+          let iy=cy+headH;
+          if(entries.length){
+            const max=Math.max(...entries.map(([,v])=>Number(v)||0),1);
+            entries.forEach(([name,value])=>{
+              drawBarRow(x+6,iy,w-12,name,value,max,total,font,rowH);
+              iy+=rowH;
+            });
+          }else{
+            pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(font);
+            pdf.text(`Nenhum ${itemLabel.toLowerCase()}`,x+6,iy+2.5);
+          }
+          cy+=groupH;
+        });
+      };
+
+      const drawRankingBox=(x,y,w,h,title,data,maxItems=6)=>{
+        const source=Array.isArray(data)?data:Object.entries(data||{});
+        const entries=compactEntries(source,maxItems,'Outros');
+        pdf.setFillColor(...C.paper);pdf.setDrawColor(...C.border);pdf.roundedRect(x,y,w,h,3,3,'FD');
+
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','bold');
+        const titleFit=fitText(title,w-8,6.7,5.2);
+        pdf.setFontSize(titleFit.size);
+        pdf.text(titleFit.text,x+4,y+6);
+
+        if(!entries.length){
+          pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(5.2);pdf.text('Sem dados.',x+4,y+14);return;
+        }
+
+        const usableH=h-13;
+        const rowH=Math.min(5.0,usableH/entries.length);
+        const font=Math.max(4.4,Math.min(5.2,rowH+0.3));
+        const max=Math.max(...entries.map(([,v])=>Number(v)||0),1);
+        let ry=y+10;
+        entries.forEach(([label,value],index)=>{
+          if(index>0){
+            pdf.setDrawColor(238,242,243);
+            pdf.line(x+4,ry-0.25,x+w-4,ry-0.25);
+          }
+          drawBarRow(x+4,ry,w-8,label,value,max,null,font,rowH);
+          ry+=rowH;
+        });
+      };
+
+      const drawResponsibleTable=(x,y,w,h)=>{
+        const totalAll=resultSummary.totalEx+resultSummary.totalSu;
+        pdf.setFillColor(...C.paper);
+        pdf.setDrawColor(...C.border);
+        pdf.roundedRect(x,y,w,h,3,3,'FD');
+
+        pdf.setTextColor(...C.text);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(7);
+        pdf.text('Lançamentos por responsável',x+4,y+6);
+        pdf.setTextColor(...C.muted);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(4.7);
+        pdf.text('Exames, cirurgias, total e participação.',x+4,y+10.2);
+
+        const cols=[0.30,0.15,0.15,0.15,0.25];
+        const headers=['Responsável','Exames','Cirurgias','Total','Participação'];
+        const innerX=x+4;
+        const innerW=w-8;
+        const headerY=y+13;
+        const headerH=7;
+        const tableBottom=y+h-3;
+
+        pdf.setFillColor(...C.blueSoft);
+        pdf.rect(innerX,headerY,innerW,headerH,'F');
+
+        let cx=innerX;
+        headers.forEach((head,i)=>{
+          const cw=innerW*cols[i];
+          pdf.setTextColor(...C.primaryDark);
+          pdf.setFont('helvetica','bold');
+          const headFit=fitText(String(head).toUpperCase(),cw-4,4.5,3.8);
+          pdf.setFontSize(headFit.size);
+          pdf.text(headFit.text,i===0?cx+2:cx+cw/2,headerY+4.6,{align:i===0?'left':'center'});
+          if(i>0){
+            pdf.setDrawColor(...C.border);
+            pdf.line(cx,headerY,cx,tableBottom);
+          }
+          cx+=cw;
+        });
+
+        const bodyTop=headerY+headerH;
+        const bodyH=Math.max(8,tableBottom-bodyTop);
+        const rowH=bodyH/Math.max(userRows.length,1);
+
+        userRows.forEach((u,idx)=>{
+          const ry=bodyTop+idx*rowH;
+          if(idx%2===0){
+            pdf.setFillColor(...C.soft);
+            pdf.rect(innerX,ry,innerW,rowH,'F');
+          }
+          if(idx>0){
+            pdf.setDrawColor(...C.border);
+            pdf.line(innerX,ry,innerX+innerW,ry);
+          }
+
+          const values=[
+            u.name,
+            u.exams,
+            u.surgeries,
+            u.exams+u.surgeries,
+            totalAll?`${Math.round(((u.exams+u.surgeries)/totalAll)*100)}%`:'0%'
+          ];
+
+          let px=innerX;
+          values.forEach((value,i)=>{
+            const cw=innerW*cols[i];
+            pdf.setTextColor(...(i===0?C.text:C.primaryDark));
+            pdf.setFont('helvetica',i===0||i===3?'bold':'normal');
+            const cellFit=fitText(value,cw-4,5.0,4.0);
+            pdf.setFontSize(cellFit.size);
+            const baseline=ry+rowH/2+cellFit.size*0.18;
+            pdf.text(cellFit.text,i===0?px+2:px+cw/2,baseline,{align:i===0?'left':'center'});
+            px+=cw;
+          });
+        });
+      };
+
+      const topEntries=data=>Object.entries(data||{}).sort((a,b)=>b[1]-a[1]);
+      const examLaunchCounts=countBy(dashboardExams.map(x=>({...x,launcher:launchedName(x)})),'launcher');
+      const surgeryInsuranceCounts=countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel');
+
+      // =====================================================
+      // PÁGINA 1 — DADOS E INDICADORES
+      // =====================================================
+      pageHeader('DADOS E INDICADORES',`Período: ${periodLabel}  |  Médico: ${selectedDoctor}  |  Responsável: ${selectedUser}  |  Status: ${selectedStatus}`);
+      let y=49;
+      const cardGap=3;
+      const metricW=(contentWidth-cardGap*3)/4;
+      drawMetricCard(margin,y,metricW,25,'Pacientes únicos',resultSummary.uniquePatients,'pacientes no período');
+      drawMetricCard(margin+(metricW+cardGap),y,metricW,25,'Total de exames',resultSummary.totalEx,`${resultSummary.realEx} realizados - ${resultSummary.exRate}%`);
+      drawMetricCard(margin+(metricW+cardGap)*2,y,metricW,25,'Total de cirurgias',resultSummary.totalSu,`${resultSummary.realSu} realizadas - ${resultSummary.suRate}%`,'green');
+      drawMetricCard(margin+(metricW+cardGap)*3,y,metricW,25,'Total de lançamentos',resultSummary.totalEx+resultSummary.totalSu,'exames + cirurgias');
+      y+=29;
+
+      const half=(contentWidth-4)/2;
+      drawStatusCard(margin,y,half,63,'Situação dos exames',resultSummary.exRate,[
+        {label:'Realizados',value:resultSummary.realEx,detail:'concluídos'},
+        {label:'Agendados',value:resultSummary.exAgendado,detail:'programados'},
+        {label:'Pendentes',value:resultSummary.exPendente,detail:'precisam atenção'},
+        {label:'Cancelados',value:resultSummary.exCancelado,detail:'fora do fluxo'}
+      ],`${resultSummary.exOpen} exame(s) ainda em aberto - ${resultSummary.exOpenRate}% do total`);
+      drawStatusCard(margin+half+4,y,half,63,'Situação das cirurgias',resultSummary.suRate,[
+        {label:'Realizadas',value:resultSummary.realSu,detail:'concluídas'},
+        {label:'Agendadas',value:resultSummary.suAgendada,detail:'com data'},
+        {label:'Autorizadas',value:resultSummary.suAutorizada,detail:'liberadas'},
+        {label:'Pendentes',value:resultSummary.suPendente,detail:'precisam atenção'},
+        {label:'Solicitações',value:resultSummary.suSolicitacao,detail:'em análise'},
+        {label:'Canceladas',value:resultSummary.suCancelada,detail:'fora do fluxo'}
+      ],`${resultSummary.suOpen} cirurgia(s) ainda em fluxo - ${resultSummary.suOpenRate}% do total`);
+      y+=68;
+
+      const hiW=(contentWidth-6)/3;
+      drawHighlight(margin,y,hiW,22,'Exame com maior volume',resultSummary.examTop?.[0]||'Sem dados',resultSummary.examTop?.[1]||0);
+      drawHighlight(margin+hiW+3,y,hiW,22,'Cirurgia com maior volume',resultSummary.surgTop?.[0]||'Sem dados',resultSummary.surgTop?.[1]||0);
+      drawHighlight(margin+(hiW+3)*2,y,hiW,22,'Profissional com maior volume',resultSummary.doctorTop?.[0]||'Sem dados',resultSummary.doctorTop?.[1]||0);
+      y+=27;
+
+      drawDonutCard(margin,y,half,77,'Distribuição dos status dos exames',advancedAnalytics.examStatusPie,'EXAMES');
+      drawDonutCard(margin+half+4,y,half,77,'Distribuição dos status das cirurgias',advancedAnalytics.surgeryStatusPie,'CIRURGIAS');
+
+      // =====================================================
+      // PÁGINA 2 — ANÁLISE POR MÉDICO
+      // =====================================================
+      pdf.addPage('a4','portrait');
+      pageHeader('ANÁLISE POR MÉDICO','Exames por médico e tipo + cirurgias por cirurgião e procedimento.');
+      y=49;
+      drawDoctorColumn(margin,y,half,231,'Exames por médico e tipo',advancedAnalytics.examByDoctor,'Exame');
+      drawDoctorColumn(margin+half+4,y,half,231,'Cirurgias por cirurgião e procedimento',advancedAnalytics.surgeryByDoctor,'Procedimento');
+
+      // =====================================================
+      // PÁGINA 3 — DETALHAMENTO POR STATUS
+      // =====================================================
+      pdf.addPage('a4','portrait');
+      pageHeader('DETALHAMENTO POR STATUS','Tipos de exame e procedimentos dentro de cada status do período.');
+      y=49;
+      drawStatusColumn(margin,y,half,231,'Exames por status e tipo',
+        ['Realizado','Pendente','Agendado','Cancelado'],advancedAnalytics.examByStatusType,advancedAnalytics.examStatusTotals,'Exame');
+      drawStatusColumn(margin+half+4,y,half,231,'Cirurgias por status e procedimento',
+        ['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada'],advancedAnalytics.surgeryByStatusType,advancedAnalytics.surgeryStatusTotals,'Procedimento');
+
+      // =====================================================
+      // PÁGINA 4 — ANÁLISES GERAIS + LANÇAMENTOS
+      // =====================================================
+      pdf.addPage('a4','portrait');
+      pageHeader('ANÁLISES GERAIS','Distribuição dos exames, cirurgias e lançamentos por responsável.');
+      y=49;
+      const smallGap=3;
+      const boxW=(contentWidth-smallGap)/2;
+      const boxH=39;
+
+      pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');pdf.setFontSize(7);pdf.text('ANÁLISE DE EXAMES',margin,y);
+      y+=4;
+      drawRankingBox(margin,y,boxW,boxH,'Exames por tipo',topEntries(countManyBy(dashboardExams,'exam_names')));
+      drawRankingBox(margin+boxW+smallGap,y,boxW,boxH,'Exames por médico',topEntries(countBy(dashboardExams,'doctor')));
+      y+=boxH+3;
+      drawRankingBox(margin,y,boxW,boxH,'Status dos exames',topEntries(countBy(dashboardExams,'status')));
+      drawRankingBox(margin+boxW+smallGap,y,boxW,boxH,'Exames por responsável',topEntries(examLaunchCounts));
+      y+=boxH+6;
+
+      pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');pdf.setFontSize(7);pdf.text('ANÁLISE DE CIRURGIAS',margin,y);
+      y+=4;
+      drawRankingBox(margin,y,boxW,boxH,'Cirurgias por procedimento',topEntries(countManyBy(dashboardSurgeries,'procedure_names')));
+      drawRankingBox(margin+boxW+smallGap,y,boxW,boxH,'Cirurgias por cirurgião',topEntries(countBy(dashboardSurgeries,'doctor')));
+      y+=boxH+3;
+      drawRankingBox(margin,y,boxW,boxH,'Status das cirurgias',topEntries(countBy(dashboardSurgeries,'status')));
+      drawRankingBox(margin+boxW+smallGap,y,boxW,boxH,'Cirurgias por convênio',topEntries(surgeryInsuranceCounts));
+      y+=boxH+5;
+
+      drawResponsibleTable(margin,y,contentWidth,47);
+
+      const totalPages=pdf.getNumberOfPages();
+      for(let p=1;p<=totalPages;p++){
+        pdf.setPage(p);
+        footer(p,totalPages);
       }
 
-      pdf.save(`Oftalmocastro_Painel_Resultados_${dashMonth||'todos-periodos'}.pdf`);
+      pdf.save(`Oftalmocastro_Resultados_${dashMonth||'todos-periodos'}.pdf`);
     }catch(error){
       console.error(error);
-      alert('Não foi possível exportar a página de Resultados em PDF.');
+      alert('Não foi possível gerar o PDF de Resultados.');
     }finally{
       setExportingPanelPdf(false);
     }
@@ -2533,7 +3232,7 @@ function App(){
             <div className="top-actions no-pdf">
               <button className="btn btn-light" onClick={exportExcel}>⬇ Excel</button>
               <button className="btn btn-panel-pdf" onClick={exportResultsPagePDF} disabled={exportingPanelPdf}>
-                {exportingPanelPdf?'Gerando painel...':'⬇ PDF do painel'}
+                {exportingPanelPdf?'Gerando PDF...':'⬇ PDF resultados'}
               </button>
               <button className="btn btn-excel" onClick={exportResultsPDF} disabled={exportingPdf}>
                 {exportingPdf?'Gerando PDF detalhado...':'⬇ PDF detalhado'}
