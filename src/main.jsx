@@ -27,6 +27,21 @@ const whatsappUrl = phone => {
   if (!n.startsWith('55')) n = `55${n}`;
   return `https://wa.me/${n}`;
 };
+const whatsappDisplay = phone => {
+  let n = normalizePhone(phone);
+  if(n.startsWith('55') && n.length>11) n=n.slice(2);
+  if(n.length===11) return `(${n.slice(0,2)}) ${n.slice(2,7)}-${n.slice(7)}`;
+  if(n.length===10) return `(${n.slice(0,2)}) ${n.slice(2,6)}-${n.slice(6)}`;
+  return phone || 'Não informado';
+};
+const followupWhatsappUrl = (phone,name) => {
+  let n = normalizePhone(phone);
+  if(!n) return '';
+  if(!n.startsWith('55')) n=`55${n}`;
+  const firstName=String(name||'').trim().split(/\s+/)[0] || 'Paciente';
+  const message=`Olá, ${firstName}! Tudo bem? 😊 Aqui é da equipe da OftalmoCastro. Estou entrando em contato para acompanhar seu atendimento conosco. Podemos dar continuidade por aqui?`;
+  return `https://wa.me/${n}?text=${encodeURIComponent(message)}`;
+};
 const countBy = (arr, key) => arr.reduce((o, x) => {
   const k = x[key] || 'Não informado';
   o[k] = (o[k] || 0) + 1;
@@ -403,12 +418,15 @@ function App(){
   const [profiles,setProfiles] = useState([]);
   const [records,setRecords] = useState([]);
   const [surgeries,setSurgeries] = useState([]);
+  const [followups,setFollowups] = useState([]);
 
   const [examModal,setExamModal] = useState(false);
   const [surgeryModal,setSurgeryModal] = useState(false);
   const [catalogModal,setCatalogModal] = useState(false);
   const [editingExamId,setEditingExamId] = useState(null);
   const [editingSurgeryId,setEditingSurgeryId] = useState(null);
+  const [followupModal,setFollowupModal] = useState(false);
+  const [followupTarget,setFollowupTarget] = useState(null);
 
   const [filterMonth,setFilterMonth] = useState(monthNow);
   const [filterDoctor,setFilterDoctor] = useState('');
@@ -420,6 +438,12 @@ function App(){
   const [dashDoctor,setDashDoctor] = useState('');
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
+  const [followDay,setFollowDay] = useState('');
+  const [followType,setFollowType] = useState('');
+  const [followDoctor,setFollowDoctor] = useState('');
+  const [followSourceStatus,setFollowSourceStatus] = useState('');
+  const [followStatus,setFollowStatus] = useState('');
+  const [followSearch,setFollowSearch] = useState('');
   const [exportingPdf,setExportingPdf] = useState(false);
   const [exportingPanelPdf,setExportingPanelPdf] = useState(false);
   const resultsPageRef = useRef(null);
@@ -433,6 +457,9 @@ function App(){
   const [sForm,setSForm] = useState({
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:''
+  });
+  const [followupForm,setFollowupForm] = useState({
+    followup_date:todayISO(),status:'A fazer',next_contact_date:'',responsible:'',note:''
   });
 
   useEffect(()=>{
@@ -470,7 +497,7 @@ function App(){
     const userId = session.user.id;
     const [
       profileRes, doctorsRes, examTypesRes, proceduresRes,
-      insurancesRes, profilesRes, examsRes, surgeriesRes
+      insurancesRes, profilesRes, examsRes, surgeriesRes, followupsRes
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('id',userId).single(),
       supabase.from('doctors').select('*').eq('active',true).order('name'),
@@ -492,10 +519,11 @@ function App(){
         indicated_by:doctors!surgeries_indicated_by_doctor_id_fkey(id,name),
         procedures(id,name),
         insurances(id,name)
-      `).order('surgery_date',{ascending:false})
+      `).order('surgery_date',{ascending:false}),
+      supabase.from('followups').select('*').order('updated_at',{ascending:false})
     ]);
 
-    const errors=[profileRes,doctorsRes,examTypesRes,proceduresRes,insurancesRes,profilesRes,examsRes,surgeriesRes]
+    const errors=[profileRes,doctorsRes,examTypesRes,proceduresRes,insurancesRes,profilesRes,examsRes,surgeriesRes,followupsRes]
       .map(x=>x.error).filter(Boolean);
     if(errors.length) console.error(errors);
 
@@ -508,6 +536,7 @@ function App(){
 
     setRecords(groupLaunchRows(examsRes.data||[],'exam'));
     setSurgeries(groupLaunchRows(surgeriesRes.data||[],'surgery'));
+    setFollowups(followupsRes?.data || []);
     setLoading(false);
   };
 
@@ -519,8 +548,14 @@ function App(){
       const {data:byPhone}=await supabase.from('patients').select('id').eq('whatsapp',cleanPhone).limit(1).maybeSingle();
       if(byPhone?.id) return byPhone.id;
     }
-    const {data:byName}=await supabase.from('patients').select('id').ilike('full_name',cleanName).limit(1).maybeSingle();
-    if(byName?.id) return byName.id;
+    const {data:byName}=await supabase.from('patients').select('id,whatsapp').ilike('full_name',cleanName).limit(1).maybeSingle();
+    if(byName?.id){
+      if(cleanPhone && normalizePhone(byName.whatsapp)!==normalizePhone(cleanPhone)){
+        const {error:updatePhoneError}=await supabase.from('patients').update({whatsapp:cleanPhone}).eq('id',byName.id);
+        if(updatePhoneError) throw updatePhoneError;
+      }
+      return byName.id;
+    }
 
     const {data,error}=await supabase.from('patients').insert({
       full_name:cleanName,
@@ -817,6 +852,117 @@ function App(){
     alert('Cirurgias filtradas excluídas com sucesso.');
   };
 
+  const followupSourceRows = useMemo(()=>{
+    const byKey=new Map(followups.map(f=>[`${f.source_type}:${f.source_group_id}`,f]));
+    const examRows=records.map(r=>({
+      key:`exam:${r.group_id||r.id}`,
+      source_type:'exam',
+      source_group_id:r.group_id||r.id,
+      sourceRecord:r,
+      patient_id:r.patient_id,
+      patient:r.patient,
+      whatsapp:r.whatsapp,
+      source_date:r.date,
+      doctor:r.doctor,
+      doctor_id:r.doctor_id,
+      item:r.exam,
+      source_status:r.status,
+      followup:byKey.get(`exam:${r.group_id||r.id}`)||null
+    }));
+    const surgeryRows=surgeries.map(r=>({
+      key:`surgery:${r.group_id||r.id}`,
+      source_type:'surgery',
+      source_group_id:r.group_id||r.id,
+      sourceRecord:r,
+      patient_id:r.patient_id,
+      patient:r.patient,
+      whatsapp:r.whatsapp,
+      source_date:r.date,
+      doctor:r.doctor,
+      doctor_id:r.doctor_id,
+      item:r.procedure,
+      source_status:r.status,
+      followup:byKey.get(`surgery:${r.group_id||r.id}`)||null
+    }));
+    return [...examRows,...surgeryRows].sort((a,b)=>String(b.source_date||'').localeCompare(String(a.source_date||'')));
+  },[records,surgeries,followups]);
+
+  const filteredFollowups = useMemo(()=>{
+    const q=followSearch.trim().toLowerCase();
+    return followupSourceRows.filter(row=>
+      (!followDay||row.source_date===followDay) &&
+      (!followType||row.source_type===followType) &&
+      (!followDoctor||row.doctor_id===followDoctor) &&
+      (!followSourceStatus||row.source_status===followSourceStatus) &&
+      (!followStatus||(row.followup?.status||'A fazer')===followStatus) &&
+      (!q||String(row.patient||'').toLowerCase().includes(q)||String(row.item||'').toLowerCase().includes(q)||String(row.doctor||'').toLowerCase().includes(q))
+    );
+  },[followupSourceRows,followDay,followType,followDoctor,followSourceStatus,followStatus,followSearch]);
+
+  const followupStats = useMemo(()=>{
+    const total=filteredFollowups.length;
+    const registered=filteredFollowups.filter(r=>Boolean(r.followup)).length;
+    const notStarted=filteredFollowups.filter(r=>!r.followup).length;
+    const inContact=filteredFollowups.filter(r=>r.followup?.status==='Em contato').length;
+    const waiting=filteredFollowups.filter(r=>r.followup?.status==='Aguardando paciente').length;
+    const noReturn=filteredFollowups.filter(r=>r.followup?.status==='Sem retorno').length;
+    const done=filteredFollowups.filter(r=>r.followup?.status==='Concluído').length;
+    const dueToday=filteredFollowups.filter(r=>r.followup?.next_contact_date===todayISO()).length;
+    const followupRate=total?Math.round((registered/total)*100):0;
+    const completionRate=registered?Math.round((done/registered)*100):0;
+    return {total,registered,notStarted,inContact,waiting,noReturn,done,dueToday,followupRate,completionRate};
+  },[filteredFollowups]);
+
+  const openFollowup = row=>{
+    const f=row.followup;
+    setFollowupTarget(row);
+    setFollowupForm({
+      followup_date:f?.followup_date||todayISO(),
+      status:f?.status||'A fazer',
+      next_contact_date:f?.next_contact_date||'',
+      responsible:f?.responsible_name||currentLaunchName||'',
+      note:f?.note||''
+    });
+    setFollowupModal(true);
+  };
+
+  const saveFollowup = async()=>{
+    if(!followupTarget) return;
+    if(!followupForm.responsible) return alert('Selecione o responsável pelo follow-up.');
+    try{
+      const payload={
+        source_type:followupTarget.source_type,
+        source_group_id:followupTarget.source_group_id,
+        patient_id:followupTarget.patient_id,
+        followup_date:followupForm.followup_date||todayISO(),
+        status:followupForm.status,
+        next_contact_date:followupForm.next_contact_date||null,
+        responsible_name:followupForm.responsible,
+        note:followupForm.note||null,
+        created_by:session.user.id,
+        updated_at:new Date().toISOString()
+      };
+      const {error}=await supabase.from('followups').upsert(payload,{onConflict:'source_type,source_group_id'});
+      if(error) throw error;
+      setFollowupModal(false);
+      setFollowupTarget(null);
+      await loadAll();
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível salvar o follow-up. Confirme se a tabela followups foi criada no Supabase.');
+    }
+  };
+
+  const openOriginalFromFollowup = row=>{
+    if(row.source_type==='exam'){
+      openEditExam(row.sourceRecord);
+      setPage('exames');
+    }else{
+      openEditSurgery(row.sourceRecord);
+      setPage('cirurgias');
+    }
+  };
+
   const dashboardExams = useMemo(()=>records.filter(r=>
     (!dashMonth||r.date.startsWith(dashMonth)) &&
     (!dashDoctor||r.doctor_id===dashDoctor) &&
@@ -1005,13 +1151,59 @@ function App(){
       'indicatedBy'
     );
 
+    // Conversão por médico do próprio lançamento (doctor_id / doctor).
+    // Não depende do campo opcional "Indicado por", então todos os lançamentos
+    // com médico/cirurgião preenchido entram na análise.
+    const conversionMap=new Map();
+    const ensureConversionDoctor=doctor=>{
+      const doctorName=doctor||'Não informado';
+      if(!conversionMap.has(doctorName)) conversionMap.set(doctorName,{
+        doctor:doctorName,
+        examTotal:0,examDone:0,examScheduled:0,examPending:0,examCanceled:0,
+        surgeryTotal:0,surgeryDone:0,surgeryScheduled:0,surgeryAuthorized:0,
+        surgeryPending:0,surgeryRequested:0,surgeryCanceled:0
+      });
+      return conversionMap.get(doctorName);
+    };
+
+    dashboardExams.forEach(record=>{
+      const row=ensureConversionDoctor(record.doctor);
+      const weight=Array.isArray(record.exam_type_ids)?record.exam_type_ids.length:0;
+      row.examTotal+=weight;
+      if(record.status==='Realizado') row.examDone+=weight;
+      else if(record.status==='Agendado') row.examScheduled+=weight;
+      else if(record.status==='Pendente') row.examPending+=weight;
+      else if(record.status==='Cancelado') row.examCanceled+=weight;
+    });
+
+    dashboardSurgeries.forEach(record=>{
+      const row=ensureConversionDoctor(record.doctor);
+      const weight=Array.isArray(record.procedure_ids)?record.procedure_ids.length:0;
+      row.surgeryTotal+=weight;
+      if(record.status==='Realizada') row.surgeryDone+=weight;
+      else if(record.status==='Agendada') row.surgeryScheduled+=weight;
+      else if(record.status==='Autorizada') row.surgeryAuthorized+=weight;
+      else if(record.status==='Pendente') row.surgeryPending+=weight;
+      else if(record.status==='Solicitação') row.surgeryRequested+=weight;
+      else if(record.status==='Cancelada') row.surgeryCanceled+=weight;
+    });
+
+    const doctorConversion=[...conversionMap.values()]
+      .map(row=>({
+        ...row,
+        examRate:percentOf(row.examDone,row.examTotal),
+        surgeryRate:percentOf(row.surgeryDone,row.surgeryTotal),
+        totalActivity:row.examTotal+row.surgeryTotal
+      }))
+      .sort((a,b)=>b.totalActivity-a.totalActivity || String(a.doctor).localeCompare(String(b.doctor),'pt-BR'));
+
     return{
       baseMonth,previousMonth,months,
       monthLabels:months.map(shortMonthLabel),
       examTrend,surgeryTrend,examConversion,surgeryConversion,
       examByStatusType,surgeryByStatusType,examStatusTotals,surgeryStatusTotals,
       examStatusPie,surgeryStatusPie,
-      examByDoctor,surgeryByDoctor,examByIndication,surgeryByIndication,
+      examByDoctor,surgeryByDoctor,examByIndication,surgeryByIndication,doctorConversion,
       currentExamTotal,previousExamTotal,currentSurgeryTotal,previousSurgeryTotal,
       currentExamRate:percentOf(currentExamDone,currentExamTotal),
       previousExamRate:percentOf(previousExamDone,previousExamTotal),
@@ -2168,6 +2360,77 @@ function App(){
         });
       };
 
+      const drawDoctorConversionTable=(x,y,w,h,title,rows,kind)=>{
+        pdf.setFillColor(...C.paper);pdf.setDrawColor(...C.border);pdf.roundedRect(x,y,w,h,3,3,'FD');
+        pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');
+        const titleFit=fitText(title,w-8,8.2,6.3);pdf.setFontSize(titleFit.size);pdf.text(titleFit.text,x+4,y+7);
+
+        const source=(rows||[]).filter(row=>kind==='exam'?row.examTotal>0:row.surgeryTotal>0);
+        if(!source.length){
+          pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(5.4);
+          pdf.text('Sem indicações registradas para os filtros atuais.',x+4,y+17);
+          return;
+        }
+
+        const isExam=kind==='exam';
+        const columns=isExam
+          ? [
+              {label:'Médico',key:'doctor',share:.28,align:'left'},
+              {label:'Total',key:'examTotal',share:.12},
+              {label:'Realizados',key:'examDone',share:.13},
+              {label:'Agendados',key:'examScheduled',share:.13},
+              {label:'Pendentes',key:'examPending',share:.12},
+              {label:'Cancelados',key:'examCanceled',share:.11},
+              {label:'Conversão',key:'examRate',share:.11,rate:true}
+            ]
+          : [
+              {label:'Médico',key:'doctor',share:.23,align:'left'},
+              {label:'Total',key:'surgeryTotal',share:.10},
+              {label:'Realizadas',key:'surgeryDone',share:.10},
+              {label:'Agendadas',key:'surgeryScheduled',share:.10},
+              {label:'Autorizadas',key:'surgeryAuthorized',share:.11},
+              {label:'Pendentes',key:'surgeryPending',share:.10},
+              {label:'Solicitações',key:'surgeryRequested',share:.11},
+              {label:'Canceladas',key:'surgeryCanceled',share:.08},
+              {label:'Conversão',key:'surgeryRate',share:.07,rate:true}
+            ];
+
+        const innerX=x+3,innerW=w-6;
+        const headY=y+11,headH=9;
+        const bodyBottom=y+h-4;
+        pdf.setFillColor(...C.blueSoft);pdf.rect(innerX,headY,innerW,headH,'F');
+
+        let cx=innerX;
+        columns.forEach((col,index)=>{
+          const cw=innerW*col.share;
+          if(index>0){pdf.setDrawColor(...C.border);pdf.line(cx,headY,cx,bodyBottom);}
+          pdf.setTextColor(...C.primaryDark);pdf.setFont('helvetica','bold');
+          const fit=fitText(col.label,cw-3,4.6,3.5);pdf.setFontSize(fit.size);
+          pdf.text(fit.text,col.align==='left'?cx+1.6:cx+cw/2,headY+5.8,{align:col.align==='left'?'left':'center'});
+          cx+=cw;
+        });
+
+        const bodyTop=headY+headH;
+        const rowH=Math.min(12,(bodyBottom-bodyTop)/Math.max(source.length,1));
+        source.forEach((row,index)=>{
+          const ry=bodyTop+index*rowH;
+          if(index%2===0){pdf.setFillColor(...C.soft);pdf.rect(innerX,ry,innerW,rowH,'F');}
+          if(index>0){pdf.setDrawColor(...C.border);pdf.line(innerX,ry,innerX+innerW,ry);}
+          let px=innerX;
+          columns.forEach(col=>{
+            const cw=innerW*col.share;
+            let value=row[col.key]??0;
+            if(col.rate) value=`${value}%`;
+            pdf.setTextColor(...(col.rate?C.green:(col.key==='doctor'?C.text:C.primaryDark)));
+            pdf.setFont('helvetica',col.key==='doctor'||col.rate?'bold':'normal');
+            const fit=fitText(value,cw-3,col.key==='doctor'?5.2:5.0,3.6);pdf.setFontSize(fit.size);
+            const baseline=ry+rowH/2+fit.size*.18;
+            pdf.text(fit.text,col.align==='left'?px+1.6:px+cw/2,baseline,{align:col.align==='left'?'left':'center'});
+            px+=cw;
+          });
+        });
+      };
+
       const topEntries=data=>Object.entries(data||{}).sort((a,b)=>b[1]-a[1]);
       const examLaunchCounts=countBy(dashboardExams.map(x=>({...x,launcher:launchedName(x)})),'launcher');
       const surgeryInsuranceCounts=countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel');
@@ -2260,6 +2523,25 @@ function App(){
       y+=boxH+5;
 
       drawResponsibleTable(margin,y,contentWidth,47);
+
+      // =====================================================
+      // PÁGINA 5 — CONVERSÃO POR MÉDICO
+      // =====================================================
+      pdf.addPage('a4','portrait');
+      pageHeader('CONVERSÃO POR MÉDICO','Status dos exames e cirurgias de cada médico + taxa efetivamente realizada.');
+      y=49;
+
+      pdf.setFillColor(...C.soft);pdf.setDrawColor(...C.border);pdf.roundedRect(margin,y,contentWidth,18,3,3,'FD');
+      pdf.setTextColor(...C.text);pdf.setFont('helvetica','bold');pdf.setFontSize(6.4);
+      pdf.text('Como ler',margin+4,y+6);
+      pdf.setTextColor(...C.muted);pdf.setFont('helvetica','normal');pdf.setFontSize(5.1);
+      const conversionNote='A conversão representa o percentual de itens realizados sobre o total de exames ou cirurgias vinculados a cada médico. As colunas mostram exatamente quantos estão realizados, agendados, pendentes, autorizados, em solicitação ou cancelados.';
+      pdf.text(pdf.splitTextToSize(safe(conversionNote),contentWidth-8),margin+4,y+11);
+      y+=23;
+
+      drawDoctorConversionTable(margin,y,contentWidth,93,'EXAMES - taxa de conversão e status por médico',advancedAnalytics.doctorConversion,'exam');
+      y+=99;
+      drawDoctorConversionTable(margin,y,contentWidth,93,'CIRURGIAS - taxa de conversão e status por médico',advancedAnalytics.doctorConversion,'surgery');
 
       const totalPages=pdf.getNumberOfPages();
       for(let p=1;p<=totalPages;p++){
@@ -3133,6 +3415,7 @@ function App(){
       <div className="nav">
         <button className={page==='exames'?'active':''} onClick={()=>setPage('exames')}>📋 <span>Exames</span></button>
         <button className={page==='cirurgias'?'active':''} onClick={()=>setPage('cirurgias')}>🏥 <span>Cirurgias</span></button>
+        <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}>🔄 <span>Acompanhamentos</span></button>
         <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}>📊 <span>Resultados</span></button>
         <button className={page==='cadastros'?'active':''} onClick={()=>setPage('cadastros')}>⚙️ <span>Cadastros</span></button>
         <button className={page==='manual'?'active':''} onClick={()=>setPage('manual')}>📖 <span>Manual</span></button>
@@ -3218,6 +3501,106 @@ function App(){
               <button className="btn btn-danger-soft" onClick={()=>delSurgery(r.id)}>Excluir</button>
             </div></td>
           </tr>):<tr><td colSpan="11" className="empty">Nenhuma cirurgia encontrada.</td></tr>}</tbody></table></div>
+        </div>
+      </section>}
+
+      {page==='followup'&&<section className="followup-page">
+        <div className="topbar followup-topbar">
+          <div>
+            <div className="eyebrow">ACOMPANHAMENTO OPERACIONAL</div>
+            <h1>Follow-up de exames e cirurgias</h1>
+            <div className="subtitle">Pacientes conectados aos lançamentos originais. Acompanhe contatos, próximos passos e o status atual sem duplicar cadastros.</div>
+          </div>
+        </div>
+
+        <div className="kpis followup-kpis">
+          <Kpi label="Pacientes na fila" value={followupStats.total}/>
+          <Kpi label="Follow-ups registrados" value={followupStats.registered}/>
+          <Kpi label="Ainda não iniciados" value={followupStats.notStarted}/>
+          <Kpi label="Concluídos" value={followupStats.done}/>
+        </div>
+
+        <div className="card followup-metrics-card">
+          <div className="followup-metrics-head">
+            <div>
+              <span>DESEMPENHO DO FOLLOW-UP</span>
+              <h3>Como está o acompanhamento?</h3>
+              <p>Os indicadores abaixo acompanham automaticamente os filtros selecionados.</p>
+            </div>
+            <div className="followup-rate-box">
+              <strong>{followupStats.followupRate}%</strong>
+              <span>já acompanhados</span>
+            </div>
+          </div>
+
+          <div className="followup-progress-wrap">
+            <div className="followup-progress-label"><span>Andamento geral</span><b>{followupStats.registered} de {followupStats.total}</b></div>
+            <div className="followup-progress"><i style={{width:`${followupStats.followupRate}%`}}/></div>
+          </div>
+
+          <div className="followup-metrics-grid">
+            <div><span>Em contato</span><b>{followupStats.inContact}</b><small>contato em andamento</small></div>
+            <div><span>Aguardando paciente</span><b>{followupStats.waiting}</b><small>aguardando resposta</small></div>
+            <div><span>Sem retorno</span><b>{followupStats.noReturn}</b><small>precisam nova tentativa</small></div>
+            <div><span>Contato hoje</span><b>{followupStats.dueToday}</b><small>programados para hoje</small></div>
+            <div className="success"><span>Concluídos</span><b>{followupStats.done}</b><small>{followupStats.completionRate}% dos registrados</small></div>
+          </div>
+        </div>
+
+        <div className="card followup-toolbar">
+          <div className="filter-title">Filtros do acompanhamento</div>
+          <div className="followup-filters">
+            <label><span>Dia do exame/cirurgia</span><input type="date" value={followDay} onChange={e=>setFollowDay(e.target.value)}/></label>
+            <label><span>Origem</span><select value={followType} onChange={e=>setFollowType(e.target.value)}><option value="">Exames e cirurgias</option><option value="exam">Exames</option><option value="surgery">Cirurgias</option></select></label>
+            <label><span>Médico</span><Select value={followDoctor} setValue={setFollowDoctor} options={doctors} first="Todos os médicos"/></label>
+            <label><span>Status do lançamento</span><select value={followSourceStatus} onChange={e=>setFollowSourceStatus(e.target.value)}><option value="">Todos</option>{['Agendado','Pendente','Realizado','Cancelado','Solicitação','Autorizada','Agendada','Realizada','Cancelada'].map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+            <label><span>Status do follow-up</span><select value={followStatus} onChange={e=>setFollowStatus(e.target.value)}><option value="">Todos</option>{['A fazer','Em contato','Aguardando paciente','Sem retorno','Concluído'].map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+            <label className="followup-search"><span>Buscar paciente</span><input value={followSearch} onChange={e=>setFollowSearch(e.target.value)} placeholder="Nome, médico ou procedimento"/></label>
+          </div>
+          <div className="followup-filter-actions">
+            <button className="btn btn-light" onClick={()=>{setFollowDay('');setFollowType('');setFollowDoctor('');setFollowSourceStatus('');setFollowStatus('');setFollowSearch('')}}>Limpar filtros</button>
+            <span>{filteredFollowups.length} registro(s)</span>
+          </div>
+        </div>
+
+        <div className="followup-list">
+          {filteredFollowups.length ? filteredFollowups.map(row=>{
+            const f=row.followup;
+            const followLabel=f?.status||'A fazer';
+            const isDue=f?.next_contact_date===todayISO();
+            return <article className={`card followup-card ${isDue?'due-today':''}`} key={row.key}>
+              <div className="followup-card-head">
+                <div>
+                  <div className="followup-badges">
+                    <span className={`source-badge ${row.source_type}`}>{row.source_type==='exam'?'EXAME':'CIRURGIA'}</span>
+                    <span className={`status ${statusClass(row.source_status)}`}>{row.source_status}</span>
+                    <span className={`follow-status ${statusClass(followLabel)}`}>{followLabel}</span>
+                    {isDue&&<span className="follow-due">CONTATO HOJE</span>}
+                  </div>
+                  <h3>{row.patient||'Paciente não informado'}</h3>
+                  <p>{row.item||'—'}</p>
+                </div>
+              </div>
+
+              <div className="followup-info-grid">
+                <div><span>Data</span><b>{brDate(row.source_date)}</b></div>
+                <div><span>Médico</span><b>{row.doctor||'—'}</b></div>
+                <div><span>Último follow-up</span><b>{f?.followup_date?brDate(f.followup_date):'Não registrado'}</b></div>
+                <div><span>Próximo contato</span><b>{f?.next_contact_date?brDate(f.next_contact_date):'—'}</b></div>
+                <div><span>Responsável</span><b>{f?.responsible_name||'—'}</b></div>
+              </div>
+
+              <div className="followup-note">
+                <span>Observação do follow-up</span>
+                <p>{f?.note||'Nenhuma observação registrada.'}</p>
+              </div>
+
+              <div className="followup-actions">
+                <button className="btn btn-primary" onClick={()=>openFollowup(row)}>{f?'Atualizar follow-up':'Registrar follow-up'}</button>
+                <button className="btn btn-light" onClick={()=>openOriginalFromFollowup(row)}>{row.source_type==='exam'?'Abrir exame':'Abrir cirurgia'}</button>
+              </div>
+            </article>;
+          }) : <div className="card empty followup-empty">Nenhum paciente encontrado com os filtros selecionados.</div>}
         </div>
       </section>}
 
@@ -3572,7 +3955,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">03</div>
             <h3>Lançar um exame</h3>
-            <p>Acesse <b>Exames → Novo exame</b>. Preencha data, paciente, WhatsApp, médico, tipo de exame, status e observação. Você pode selecionar vários exames no mesmo lançamento. Depois clique em <b>Salvar exame</b>.</p>
+            <p>Acesse <b>Exames → Novo exame</b>. Preencha data, paciente, médico, tipo de exame, status e observação. O WhatsApp é opcional e pode ser informado para facilitar o contato no Follow-up. Você pode selecionar vários exames no mesmo lançamento. Depois clique em <b>Salvar exame</b>.</p>
             <div className="manual-note">Use o campo Observação para registrar informações importantes que a equipe precise consultar depois.</div>
           </article>
 
@@ -3625,7 +4008,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">11</div>
             <h3>WhatsApp do paciente</h3>
-            <p>Ao informar o WhatsApp no cadastro, o ícone aparece ao lado do paciente. Clique nele para abrir rapidamente a conversa no WhatsApp.</p>
+            <p>O WhatsApp é opcional ao lançar ou editar um exame/cirurgia. Quando informado, fica salvo no cadastro do paciente e pode ser usado no Follow-up. No Follow-up, o WhatsApp fica oculto na visão principal para manter a tela limpa. Ao clicar em <b>Registrar follow-up</b> ou <b>Atualizar follow-up</b>, o contato aparece junto com o botão <b>Enviar WhatsApp</b>, que abre a conversa com uma mensagem pronta alterando automaticamente o nome do paciente.</p>
           </article>
 
           <article className="card manual-card">
@@ -4491,7 +4874,7 @@ function App(){
       <div className="form-grid">
         <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
-        <Field label="WhatsApp"><input value={examForm.whatsapp} onChange={e=>setExamForm({...examForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
+        <Field label="WhatsApp / contato (opcional)"><input type="tel" inputMode="tel" autoComplete="tel" value={examForm.whatsapp} onChange={e=>setExamForm({...examForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
         <Field label="Médico"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
         <Field label="Indicado por (opcional)"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
         <Field label={editingExamId ? "Exame" : "Exames"} full>
@@ -4592,7 +4975,7 @@ function App(){
       <div className="form-grid">
         <Field label="Data"><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
         <Field label="Paciente"><input value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
-        <Field label="WhatsApp"><input value={sForm.whatsapp} onChange={e=>setSForm({...sForm,whatsapp:e.target.value})}/></Field>
+        <Field label="WhatsApp / contato (opcional)"><input type="tel" inputMode="tel" autoComplete="tel" value={sForm.whatsapp} onChange={e=>setSForm({...sForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
         <Field label="Cirurgião"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
         <Field label="Indicado por (opcional)"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
         <Field label={editingSurgeryId ? "Procedimento" : "Procedimentos"} full>
@@ -4641,6 +5024,89 @@ function App(){
         <Field label="Horário da cirurgia"><input type="time" value={sForm.time} onChange={e=>setSForm({...sForm,time:e.target.value})}/></Field>
         <Field label="Pagamento"><Select value={sForm.payment} setValue={v=>setSForm({...sForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
         <Field label="Observações" full><textarea value={sForm.obs} onChange={e=>setSForm({...sForm,obs:e.target.value})} rows="5"/></Field>
+      </div>
+    </Modal>
+
+    <style>{`
+      .followup-metrics-card{padding:20px}
+      .followup-metrics-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+      .followup-metrics-head>div:first-child>span{display:block;color:#315f72;font-size:10px;font-weight:800;letter-spacing:.08em}
+      .followup-metrics-head h3{margin:5px 0 3px;color:#20313b;font-size:18px}
+      .followup-metrics-head p{margin:0;color:#74838c;font-size:12px}
+      .followup-rate-box{flex:0 0 150px;padding:13px 16px;border-radius:12px;background:#edf6f0;text-align:center}
+      .followup-rate-box strong{display:block;color:#417257;font-size:26px;line-height:1}
+      .followup-rate-box span{display:block;margin-top:5px;color:#6f8277;font-size:10px;font-weight:700;text-transform:uppercase}
+      .followup-progress-wrap{margin-top:18px}
+      .followup-progress-label{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px;color:#687a83;font-size:11px}
+      .followup-progress-label b{color:#315f72}
+      .followup-progress{height:9px;border-radius:999px;background:#eaf0f2;overflow:hidden}
+      .followup-progress i{display:block;height:100%;min-width:0;border-radius:999px;background:#4f8a6b;transition:width .2s ease}
+      .followup-metrics-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:16px}
+      .followup-metrics-grid>div{min-width:0;padding:12px 13px;border:1px solid #e5ecef;border-radius:11px;background:#fafcfc}
+      .followup-metrics-grid>div.success{background:#f2f9f4;border-color:#d8ebde}
+      .followup-metrics-grid span{display:block;color:#7d8c93;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+      .followup-metrics-grid b{display:block;margin:4px 0 2px;color:#315f72;font-size:21px}
+      .followup-metrics-grid small{display:block;color:#84939a;font-size:10px;line-height:1.3}
+      .followup-modal-contact{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 15px;margin-bottom:14px;border:1px solid #cfe5d6;border-radius:12px;background:#f4fbf6}
+      .followup-modal-contact>div{min-width:0}
+      .followup-modal-contact span{display:block;color:#73877a;font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+      .followup-modal-contact b{display:block;margin-top:4px;color:#2f5f45;font-size:14px;overflow-wrap:anywhere}
+      .followup-modal-contact .btn{flex:0 0 auto}
+      .followup-page{display:flex;flex-direction:column;gap:18px}
+      .followup-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+      .followup-toolbar{padding:18px}
+      .followup-filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;align-items:end}
+      .followup-filters label{display:flex;flex-direction:column;gap:6px;margin:0;color:#687a83;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+      .followup-filters input,.followup-filters select{width:100%;min-width:0;text-transform:none;letter-spacing:0;font-weight:500}
+      .followup-search{grid-column:span 2}
+      .followup-filter-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid #e6ecef;color:#74838c;font-size:12px}
+      .followup-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+      .followup-card{padding:18px;min-width:0;overflow:hidden}
+      .followup-card.due-today{box-shadow:0 0 0 2px #d9b45b inset}
+      .followup-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding-bottom:14px;border-bottom:1px solid #edf1f3}
+      .followup-card-head h3{margin:8px 0 3px;color:#20313b;font-size:17px}
+      .followup-card-head p{margin:0;color:#6e7f87;font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+      .followup-contact-box{flex:0 0 auto;min-width:150px;padding:10px 12px;border:1px solid #dce8e2;border-radius:11px;background:#f5fbf7;text-align:right}
+      .followup-contact-box span{display:block;margin-bottom:3px;color:#6c8b79;font-size:8px;font-weight:800;letter-spacing:.06em}
+      .followup-contact-box b{display:block;color:#2f5f45;font-size:12px;white-space:nowrap}
+      .followup-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+      .source-badge,.follow-status,.follow-due{display:inline-flex;align-items:center;min-height:23px;padding:4px 8px;border-radius:999px;font-size:9px;font-weight:800;letter-spacing:.04em}
+      .source-badge.exam{background:#eaf2f5;color:#315f72}.source-badge.surgery{background:#edf6f0;color:#417257}
+      .follow-status{background:#f2f5f6;color:#5c6d75}.follow-status.concluido{background:#edf6f0;color:#417257}.follow-status.sem-retorno{background:#fbeeee;color:#a64c4c}.follow-status.aguardando-paciente{background:#fff5df;color:#976820}.follow-status.em-contato{background:#eaf2f5;color:#315f72}
+      .follow-due{background:#fff5df;color:#8d641f}
+      .followup-info-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:14px 0}
+      .followup-info-grid>div{min-width:0;padding:10px;border-radius:10px;background:#f8fafb}
+      .followup-info-grid span,.followup-note span{display:block;margin-bottom:4px;color:#84939a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+      .followup-info-grid b{display:block;color:#31444d;font-size:12px;line-height:1.35;overflow-wrap:anywhere}
+      .followup-note{padding:12px;border:1px solid #e5ecef;border-radius:10px;background:#fff}
+      .followup-note p{margin:0;color:#53636e;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+      .followup-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+      .btn-whatsapp-followup{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#eaf7ef!important;border-color:#bfe1cb!important;color:#247443!important;text-decoration:none!important;font-weight:800}
+      .btn-whatsapp-followup:hover{background:#dcf1e4!important;border-color:#a9d5b8!important}
+      .btn-whatsapp-followup svg{width:17px;height:17px;flex:0 0 17px}
+      .followup-empty{grid-column:1/-1;padding:28px;text-align:center}
+      .followup-form-grid textarea{resize:vertical;min-height:110px}
+      @media(max-width:1180px){.followup-metrics-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.followup-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.followup-search{grid-column:span 1}.followup-info-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      @media(max-width:900px){.followup-metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.followup-list{grid-template-columns:1fr}.followup-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.followup-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.followup-info-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:620px){.followup-metrics-head{flex-direction:column}.followup-rate-box{width:100%;flex-basis:auto}.followup-metrics-grid,.followup-kpis,.followup-filters,.followup-info-grid{grid-template-columns:1fr}.followup-modal-contact{align-items:stretch;flex-direction:column}.followup-modal-contact .btn{width:100%}.followup-card{padding:14px}.followup-card-head{align-items:stretch;flex-direction:column}.followup-contact-box{text-align:left;width:100%;min-width:0}.followup-filter-actions{align-items:stretch;flex-direction:column}.followup-actions .btn,.followup-actions a.btn{flex:1 1 100%}}
+    `}</style>
+
+    <Modal open={followupModal} onClose={()=>{setFollowupModal(false);setFollowupTarget(null)}} title={followupTarget?.followup?'Atualizar follow-up':'Registrar follow-up'} subtitle={followupTarget ? `${followupTarget.patient} • ${followupTarget.source_type==='exam'?'Exame':'Cirurgia'} • ${brDate(followupTarget.source_date)}` : ''} onSave={saveFollowup} saveText="Salvar follow-up">
+      {followupTarget&&<div className="followup-modal-contact">
+        <div>
+          <span>Contato do paciente</span>
+          <b>{whatsappDisplay(followupTarget.whatsapp)}</b>
+        </div>
+        {followupTarget.whatsapp ? <a className="btn btn-whatsapp-followup" href={followupWhatsappUrl(followupTarget.whatsapp,followupTarget.patient)} target="_blank" rel="noreferrer" title={`Conversar com ${followupTarget.patient} no WhatsApp`}>
+          <WhatsAppIcon/><span>Enviar WhatsApp</span>
+        </a> : <button className="btn btn-light" disabled>WhatsApp não informado</button>}
+      </div>}
+      <div className="form-grid followup-form-grid">
+        <Field label="Data do contato"><input type="date" value={followupForm.followup_date} onChange={e=>setFollowupForm({...followupForm,followup_date:e.target.value})}/></Field>
+        <Field label="Status do follow-up"><Select value={followupForm.status} setValue={v=>setFollowupForm({...followupForm,status:v})} options={['A fazer','Em contato','Aguardando paciente','Sem retorno','Concluído']}/></Field>
+        <Field label="Próximo contato"><input type="date" value={followupForm.next_contact_date} onChange={e=>setFollowupForm({...followupForm,next_contact_date:e.target.value})}/></Field>
+        <Field label="Responsável"><Select value={followupForm.responsible} setValue={v=>setFollowupForm({...followupForm,responsible:v})} options={launcherOptionsAll} first="Selecione"/></Field>
+        <Field label="Observação do follow-up" full><textarea rows="5" value={followupForm.note} onChange={e=>setFollowupForm({...followupForm,note:e.target.value})} placeholder="Ex.: paciente pediu retorno na sexta, aguarda autorização, não respondeu WhatsApp..."/></Field>
       </div>
     </Modal>
 
