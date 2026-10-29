@@ -58,6 +58,8 @@ const totalItems = (arr, key) => arr.reduce((total, item) => total + (Array.isAr
 const totalItemsByStatus = (arr, key, status) => arr.reduce((total, item) =>
   total + (item.status === status && Array.isArray(item[key]) ? item[key].length : 0), 0);
 
+const countRowsByStatus = (arr,status) => arr.filter(item=>item.status===status).length;
+
 const countWeightedBy = (arr, key, itemsKey) => arr.reduce((o, item) => {
   const label = item[key] || 'Não informado';
   const weight = Array.isArray(item[itemsKey]) && item[itemsKey].length ? item[itemsKey].length : 0;
@@ -66,6 +68,37 @@ const countWeightedBy = (arr, key, itemsKey) => arr.reduce((o, item) => {
 }, {});
 
 const percentOf = (value,total) => total ? Math.round((value/total)*100) : 0;
+
+const normalizeCatalogLabel = value => String(value||'')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g,'')
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g,' ')
+  .trim();
+
+const knownCatalogKind = value => {
+  const n=normalizeCatalogLabel(value);
+  const surgery=
+    n.includes('catarata') || n.includes('blefaroplast') || n.includes('ptose') ||
+    n.includes('pterig') || n.includes('estrab') || n.includes('refrativ') ||
+    n.includes('ectrop') || n.includes('entrop') ||
+    ((n.includes('tumor'))&&(n.includes('palpebr')||n.includes('conjunt'))) ||
+    n.includes('calazio') || (n.includes('nodul')&&n.includes('palpebr')) ||
+    (n.includes('sondagem')&&n.includes('lacr')) || n.includes('outra cirurgia');
+  if(surgery) return 'surgery';
+
+  const procedure=
+    n.includes('anti vegf') || n.includes('avastin') || n.includes('lucentis') || n.includes('eylia') || n.includes('vabysmo') ||
+    n.includes('ozurdex') || (n.includes('vias lacrimais')&&!n.includes('sondagem')) ||
+    (n.includes('les')&&n.includes('palpebr')&&!n.includes('tumor')&&!n.includes('nodul')) ||
+    n.includes('laser co2') || (n.includes('laser')&&n.includes('mao')) ||
+    n.includes('botox') || n.includes('toxina botulin') || n.includes('microfoc') || n.includes('ultrassom') || n.startsWith('us ') ||
+    n.includes('bioestimul') || n.includes('profhilo') || n.includes('skinvive') || n.includes('harmoniz') ||
+    n.includes('hialuron') || (n.includes('cicatriz')&&n.includes('acne')) || n.includes('terco inferior') ||
+    (n.includes('lifting')&&n.includes('superc'));
+  if(procedure) return 'procedure';
+  return 'unknown';
+};
 
 const shiftMonth = (value,delta) => {
   const base = value || monthNow;
@@ -87,63 +120,158 @@ const variationPct = (current,previous) => {
 };
 
 const groupLaunchRows = (rows, kind) => {
-  const groups = new Map();
+  if(kind==='exam'){
+    const groups=new Map();
+    rows.forEach(r=>{
+      const groupId=r.launch_group_id||r.id;
+      if(!groups.has(groupId)){
+        groups.set(groupId,{
+          group_id:groupId,
+          db_ids:[],
+          patient_id:r.patients?.id||'',
+          date:r.exam_date,
+          patient:r.patients?.full_name||'',
+          whatsapp:r.patients?.whatsapp||'',
+          doctor:r.doctors?.name||'',
+          doctor_id:r.doctors?.id||'',
+          indicatedBy:r.indicated_by?.name||'',
+          indicatedById:r.indicated_by?.id||'',
+          status:r.status,
+          obs:r.observation||'',
+          launchedBy:r.launched_by,
+          launchedByName:r.launched_by_name||'',
+          exam_type_ids:[],
+          exam_names:[]
+        });
+      }
+      const g=groups.get(groupId);
+      g.db_ids.push(r.id);
+      if(r.exam_types?.id) g.exam_type_ids.push(r.exam_types.id);
+      if(r.exam_types?.name) g.exam_names.push(r.exam_types.name);
+    });
+    return [...groups.values()].map(g=>({
+      ...g,
+      id:g.group_id,
+      exam:g.exam_names.join(' • '),
+      exam_type_id:g.exam_type_ids[0]||''
+    }));
+  }
 
-  rows.forEach(r => {
-    const groupId = r.launch_group_id || r.id;
-    if(!groups.has(groupId)){
-      groups.set(groupId,{
-        group_id:groupId,
+  // V17: cada linha classificada como surgery/review representa UMA cirurgia.
+  // Registros procedure_legacy permanecem preservados no banco, mas aparecem
+  // somente no módulo Procedimentos.
+  return rows
+    .filter(r=>r.record_kind!=='procedure_legacy')
+    .map(r=>({
+      id:r.id,
+      group_id:r.launch_group_id||r.id,
+      db_ids:[r.id],
+      patient_id:r.patients?.id||'',
+      date:r.surgery_date,
+      patient:r.patients?.full_name||'',
+      whatsapp:r.patients?.whatsapp||'',
+      doctor:r.doctors?.name||'',
+      doctor_id:r.doctors?.id||'',
+      indicatedBy:r.indicated_by?.name||'',
+      indicatedById:r.indicated_by?.id||'',
+      status:r.status,
+      obs:r.observation||'',
+      launchedBy:r.launched_by,
+      launchedByName:r.launched_by_name||'',
+      surgery_type_id:r.surgery_type?.id||r.surgery_type_id||'',
+      surgery_type:r.surgery_type?.name||'Cirurgia a classificar',
+      surgery_type_names:[r.surgery_type?.name||'Cirurgia a classificar'],
+      procedure_ids:[],
+      procedure_names:[],
+      procedure:'Sem procedimentos vinculados',
+      eye:r.eye,
+      insurance:r.insurances?.name||'',
+      insurance_id:r.insurances?.id||'',
+      arrival:r.arrival_time||'',
+      time:r.surgery_time||'',
+      payment:r.payment_status||'',
+      classification_review:r.record_kind==='review'
+    }));
+};
+
+const mapProcedureRows = (rows, surgeryById=new Map(), surgeryByGroup=new Map()) => rows.filter(r=>r.record_kind!=='surgery_legacy').map(r=>{
+  const linkedSurgery=(r.surgery_id&&surgeryById.get(r.surgery_id)) || surgeryByGroup.get(r.surgery_group_id) || null;
+  return {
+    id:r.id,
+    group_id:r.launch_group_id||r.id,
+    patient_id:r.patients?.id||'',
+    date:r.procedure_date,
+    patient:r.patients?.full_name||'',
+    whatsapp:r.patients?.whatsapp||'',
+    doctor:r.doctors?.name||'',
+    doctor_id:r.doctors?.id||'',
+    indicatedBy:r.indicated_by?.name||'',
+    indicatedById:r.indicated_by?.id||'',
+    procedure:r.procedures?.name||'',
+    procedure_id:r.procedures?.id||r.procedure_id||'',
+    eye:r.eye||'Não se aplica',
+    insurance:r.insurances?.name||'',
+    insurance_id:r.insurances?.id||'',
+    status:r.status,
+    time:r.procedure_time||'',
+    payment:r.payment_status||'Não informado',
+    obs:r.observation||'',
+    launchedBy:r.launched_by,
+    launchedByName:r.launched_by_name||'',
+    surgery_id:r.surgery_id||'',
+    surgery_group_id:r.surgery_group_id||'',
+    linked_surgery:linkedSurgery?.surgery_type||'',
+    linked_surgery_group:linkedSurgery||null,
+    legacy_surgery_id:r.legacy_surgery_id||''
+  };
+});
+
+
+// Agrupa apenas a VISUALIZAÇÃO dos procedimentos.
+// Cada procedure_record continua existindo individualmente e continua contando
+// como 1 procedimento nos Resultados. Procedimentos do mesmo pacote cirúrgico
+// aparecem em uma única linha para facilitar a leitura operacional.
+const groupProcedureRows = rows => {
+  const groups=new Map();
+  (rows||[]).forEach(row=>{
+    // Prefere surgery_group_id para que registros antigos do mesmo pacote
+    // sejam unidos mesmo quando alguns têm surgery_id e outros têm apenas o grupo.
+    const groupKey=row.surgery_group_id
+      ? `surgery-group:${row.surgery_group_id}:${row.patient_id}:${row.date}`
+      : row.surgery_id
+        ? `surgery:${row.surgery_id}`
+        : row.group_id
+          ? `launch:${row.group_id}`
+          : `row:${row.id}`;
+
+    if(!groups.has(groupKey)){
+      groups.set(groupKey,{
+        ...row,
+        id:groupKey,
+        group_key:groupKey,
         db_ids:[],
-        patient_id:r.patients?.id||'',
-        date:kind==='exam' ? r.exam_date : r.surgery_date,
-        patient:r.patients?.full_name||'',
-        whatsapp:r.patients?.whatsapp||'',
-        doctor:r.doctors?.name||'',
-        doctor_id:r.doctors?.id||'',
-        indicatedBy:r.indicated_by?.name||'',
-        indicatedById:r.indicated_by?.id||'',
-        status:r.status,
-        obs:r.observation||'',
-        launchedBy:r.launched_by,
-        launchedByName:r.launched_by_name||''
+        procedure_ids:[],
+        procedure_names:[],
+        item_count:0
       });
     }
 
-    const g=groups.get(groupId);
-    g.db_ids.push(r.id);
+    const group=groups.get(groupKey);
+    group.db_ids.push(row.id);
+    group.procedure_ids.push(row.procedure_id);
+    group.procedure_names.push(row.procedure);
+    group.item_count+=1;
 
-    if(kind==='exam'){
-      g.exam_type_ids ||= [];
-      g.exam_names ||= [];
-      if(r.exam_types?.id) g.exam_type_ids.push(r.exam_types.id);
-      if(r.exam_types?.name) g.exam_names.push(r.exam_types.name);
-    }else{
-      g.procedure_ids ||= [];
-      g.procedure_names ||= [];
-      if(r.procedures?.id) g.procedure_ids.push(r.procedures.id);
-      if(r.procedures?.name) g.procedure_names.push(r.procedures.name);
-      g.eye=r.eye;
-      g.insurance=r.insurances?.name||'';
-      g.insurance_id=r.insurances?.id||'';
-      g.arrival=r.arrival_time||'';
-      g.time=r.surgery_time||'';
-      g.payment=r.payment_status||'';
-    }
+    // Se algum item do grupo possuir o vínculo resolvido, preserva-o no grupo.
+    if(!group.linked_surgery && row.linked_surgery) group.linked_surgery=row.linked_surgery;
+    if(!group.linked_surgery_group && row.linked_surgery_group) group.linked_surgery_group=row.linked_surgery_group;
+    if(!group.surgery_id && row.surgery_id) group.surgery_id=row.surgery_id;
+    if(!group.surgery_group_id && row.surgery_group_id) group.surgery_group_id=row.surgery_group_id;
   });
 
-  return [...groups.values()].map(g=>({
-    ...g,
-    id:g.group_id,
-    ...(kind==='exam'
-      ? {
-          exam:g.exam_names.join(' • '),
-          exam_type_id:g.exam_type_ids[0]||''
-        }
-      : {
-          procedure:g.procedure_names.join(' • '),
-          procedure_id:g.procedure_ids[0]||''
-        })
+  return [...groups.values()].map(group=>({
+    ...group,
+    procedure:group.procedure_names.join(' • ')
   }));
 };
 
@@ -343,6 +471,23 @@ function PatientCell({name,phone}){
 function ObservationCell({text}) {
   return text ? <div className="obs-cell" title={text}>{text}</div> : <span className="muted">—</span>;
 }
+function LinkedProceduresCell({names=[]}){
+  const items=(Array.isArray(names)?names:[]).filter(Boolean);
+  if(!items.length) return <span className="muted">Sem procedimentos vinculados</span>;
+  return <div className="linked-procedures-cell">
+    <small>Vinculados ao pacote</small>
+    <div>{items.map((name,index)=><span className="linked-procedure-chip" key={`${name}-${index}`}>{name}</span>)}</div>
+  </div>;
+}
+
+function ProcedureListCell({names=[]}){
+  const items=(Array.isArray(names)?names:[]).filter(Boolean);
+  if(!items.length) return <span className="muted">—</span>;
+  return <div className="procedure-launch-cell">
+    <small>{items.length} {items.length===1?'procedimento':'procedimentos'} neste lançamento</small>
+    <div>{items.map((name,index)=><span className="linked-procedure-chip" key={`${name}-${index}`}>{name}</span>)}</div>
+  </div>;
+}
 function Kpi({label,value}){return <div className="kpi"><small>{label}</small><strong>{value}</strong></div>;}
 
 const statusClass = status => String(status||'')
@@ -413,31 +558,44 @@ function App(){
 
   const [doctors,setDoctors] = useState([]);
   const [examTypes,setExamTypes] = useState([]);
+  const [surgeryTypes,setSurgeryTypes] = useState([]);
   const [procedures,setProcedures] = useState([]);
   const [insurances,setInsurances] = useState([]);
   const [profiles,setProfiles] = useState([]);
   const [records,setRecords] = useState([]);
   const [surgeries,setSurgeries] = useState([]);
+  const [procedureRecords,setProcedureRecords] = useState([]);
   const [followups,setFollowups] = useState([]);
 
   const [examModal,setExamModal] = useState(false);
   const [surgeryModal,setSurgeryModal] = useState(false);
+  const [procedureModal,setProcedureModal] = useState(false);
   const [catalogModal,setCatalogModal] = useState(false);
   const [editingExamId,setEditingExamId] = useState(null);
   const [editingSurgeryId,setEditingSurgeryId] = useState(null);
+  const [editingProcedureId,setEditingProcedureId] = useState(null);
   const [followupModal,setFollowupModal] = useState(false);
   const [followupTarget,setFollowupTarget] = useState(null);
 
   const [filterMonth,setFilterMonth] = useState(monthNow);
   const [filterDoctor,setFilterDoctor] = useState('');
   const [filterExam,setFilterExam] = useState('');
+  const [examSearch,setExamSearch] = useState('');
   const [sMonth,setSMonth] = useState(monthNow);
   const [sDoctor,setSDoctor] = useState('');
+  const [sSurgeryType,setSSurgeryType] = useState('');
   const [sProcedure,setSProcedure] = useState('');
+  const [sSearch,setSSearch] = useState('');
+  const [pMonth,setPMonth] = useState(monthNow);
+  const [pDoctor,setPDoctor] = useState('');
+  const [pProcedure,setPProcedure] = useState('');
+  const [pStatus,setPStatus] = useState('');
+  const [pSearch,setPSearch] = useState('');
   const [dashMonth,setDashMonth] = useState(monthNow);
   const [dashDoctor,setDashDoctor] = useState('');
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
+  const [dashPatient,setDashPatient] = useState('');
   const [followDay,setFollowDay] = useState('');
   const [followType,setFollowType] = useState('');
   const [followDoctor,setFollowDoctor] = useState('');
@@ -455,8 +613,12 @@ function App(){
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:''
+  });
+  const [pForm,setPForm] = useState({
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
+    insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:'',obs:''
   });
   const [followupForm,setFollowupForm] = useState({
     followup_date:todayISO(),status:'A fazer',next_contact_date:'',responsible:'',note:''
@@ -480,12 +642,18 @@ function App(){
   const launcherOptions = ['Juliana','Luiza','Elisangela'];
   const launcherOptionsAll = ['Juliana','Luiza','Elisangela','ADM'];
 
+  // Catálogos físicos separados no Supabase:
+  // surgery_types = somente cirurgias | procedures = somente procedimentos.
+  // O SQL V17 desativa o item no catálogo errado sem apagar o histórico.
+  const procedureOptions = useMemo(()=>procedures,[procedures]);
+
   const currentLaunchName = profile?.role === 'admin'
     ? 'ADM'
     : launcherName;
 
   const examLaunchName = examForm.launcher || currentLaunchName;
   const surgeryLaunchName = sForm.launcher || currentLaunchName;
+  const procedureLaunchName = pForm.launcher || currentLaunchName;
 
   const selectLauncher = name => {
     setLauncherName(name);
@@ -496,12 +664,13 @@ function App(){
     setLoading(true);
     const userId = session.user.id;
     const [
-      profileRes, doctorsRes, examTypesRes, proceduresRes,
-      insurancesRes, profilesRes, examsRes, surgeriesRes, followupsRes
+      profileRes, doctorsRes, examTypesRes, surgeryTypesRes, proceduresRes,
+      insurancesRes, profilesRes, examsRes, surgeriesRes, procedureRecordsRes, followupsRes
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('id',userId).single(),
       supabase.from('doctors').select('*').eq('active',true).order('name'),
       supabase.from('exam_types').select('*').eq('active',true).order('name'),
+      supabase.from('surgery_types').select('*').eq('active',true).order('name'),
       supabase.from('procedures').select('*').eq('active',true).order('name'),
       supabase.from('insurances').select('*').eq('active',true).order('name'),
       supabase.from('profiles').select('id,full_name,role,active').eq('active',true).order('full_name'),
@@ -513,29 +682,146 @@ function App(){
         exam_types(id,name)
       `).order('exam_date',{ascending:false}),
       supabase.from('surgeries').select(`
-        id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,
+        id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,surgery_type_id,record_kind,
         patients(id,full_name,whatsapp),
         doctors:doctors!surgeries_doctor_id_fkey(id,name),
         indicated_by:doctors!surgeries_indicated_by_doctor_id_fkey(id,name),
-        procedures(id,name),
+        surgery_type:surgery_types!surgeries_surgery_type_id_fkey(id,name),
+        procedures:procedures!surgeries_procedure_id_fkey(id,name),
         insurances(id,name)
       `).order('surgery_date',{ascending:false}),
+      supabase.from('procedure_records').select(`
+        id,launch_group_id,procedure_date,status,procedure_time,payment_status,observation,launched_by,launched_by_name,surgery_id,surgery_group_id,legacy_surgery_id,record_kind,procedure_id,eye,
+        patients(id,full_name,whatsapp),
+        doctors:doctors!procedure_records_doctor_id_fkey(id,name),
+        indicated_by:doctors!procedure_records_indicated_by_doctor_id_fkey(id,name),
+        procedures:procedures!procedure_records_procedure_id_fkey(id,name),
+        insurances:insurances!procedure_records_insurance_id_fkey(id,name)
+      `).order('procedure_date',{ascending:false}),
       supabase.from('followups').select('*').order('updated_at',{ascending:false})
     ]);
 
-    const errors=[profileRes,doctorsRes,examTypesRes,proceduresRes,insurancesRes,profilesRes,examsRes,surgeriesRes,followupsRes]
+    const errors=[profileRes,doctorsRes,examTypesRes,surgeryTypesRes,proceduresRes,insurancesRes,profilesRes,examsRes,surgeriesRes,procedureRecordsRes,followupsRes]
       .map(x=>x.error).filter(Boolean);
     if(errors.length) console.error(errors);
 
     setProfile(profileRes.data || null);
     setDoctors(doctorsRes.data || []);
     setExamTypes(examTypesRes.data || []);
+    setSurgeryTypes(surgeryTypesRes.data || []);
     setProcedures(proceduresRes.data || []);
     setInsurances(insurancesRes.data || []);
     setProfiles(profilesRes.data || []);
 
+    const groupedSurgeries=groupLaunchRows(surgeriesRes.data||[],'surgery');
+    const surgeryById=new Map();
+    const surgeryByGroup=new Map();
+    const surgeryGroupCount=new Map();
+    groupedSurgeries.forEach(item=>{
+      (item.db_ids||[]).forEach(id=>surgeryById.set(id,item));
+      surgeryGroupCount.set(item.group_id,(surgeryGroupCount.get(item.group_id)||0)+1);
+      if(!surgeryByGroup.has(item.group_id)) surgeryByGroup.set(item.group_id,item);
+    });
+
+    // Só usa group_id como fallback quando existe UMA cirurgia no pacote.
+    // Ex.: Pterígio + Catarata continuam duas cirurgias, nunca cirurgia + procedimento.
+    const singleSurgeryByGroup=new Map(
+      [...surgeryByGroup.entries()].filter(([groupId])=>surgeryGroupCount.get(groupId)===1)
+    );
+    // Regra oficial de classificação: o banco continua preservado, mas a interface
+    // nunca trata um nome reconhecido como CIRURGIA como se fosse PROCEDIMENTO.
+    // Itens desconhecidos permanecem visíveis para não esconder novos cadastros.
+    const mappedProcedures=mapProcedureRows(procedureRecordsRes?.data||[],surgeryById,singleSurgeryByGroup)
+      .filter(item=>knownCatalogKind(item.procedure)!=='surgery');
+
+    const linkedBySurgeryId=new Map();
+    const linkedByGroup=new Map();
+    const linkedByPatientDate=new Map();
+    const surgeryByPatientDate=new Map();
+    const anchoredLaunchGroupsByPatientDate=new Map();
+
+    // Índice auxiliar de cirurgias por paciente + data. Este fallback só é usado
+    // quando existe UMA única cirurgia para aquela paciente naquele dia. Assim,
+    // Catarata + Pterígio continuam sendo duas cirurgias independentes.
+    groupedSurgeries.forEach(item=>{
+      const key=`${item.patient_id||''}|${item.date||''}`;
+      if(!surgeryByPatientDate.has(key)) surgeryByPatientDate.set(key,[]);
+      surgeryByPatientDate.get(key).push(item);
+    });
+
+    // Primeiro cria os vínculos fortes. Eles servem como âncora do pacote.
+    mappedProcedures.forEach(item=>{
+      const patientDateKey=`${item.patient_id||''}|${item.date||''}`;
+
+      if(item.surgery_id){
+        if(!linkedBySurgeryId.has(item.surgery_id)) linkedBySurgeryId.set(item.surgery_id,[]);
+        linkedBySurgeryId.get(item.surgery_id).push(item);
+      }
+      if(item.surgery_group_id){
+        if(!linkedByGroup.has(item.surgery_group_id)) linkedByGroup.set(item.surgery_group_id,[]);
+        linkedByGroup.get(item.surgery_group_id).push(item);
+      }
+
+      const resolvedById=Boolean(item.surgery_id && surgeryById.has(item.surgery_id));
+      const resolvedByCurrentGroup=Boolean(item.surgery_group_id && singleSurgeryByGroup.has(item.surgery_group_id));
+      if((resolvedById || resolvedByCurrentGroup) && item.group_id){
+        if(!anchoredLaunchGroupsByPatientDate.has(patientDateKey)) anchoredLaunchGroupsByPatientDate.set(patientDateKey,new Set());
+        anchoredLaunchGroupsByPatientDate.get(patientDateKey).add(item.group_id);
+      }
+    });
+
+    // Depois recupera registros antigos do MESMO pacote. Um procedimento entra no
+    // fallback quando já traz pista cirúrgica antiga OU compartilha launch_group_id
+    // com outro procedimento que está corretamente ancorado à cirurgia.
+    mappedProcedures.forEach(item=>{
+      const key=`${item.patient_id||''}|${item.date||''}`;
+      const anchoredLaunchGroups=anchoredLaunchGroupsByPatientDate.get(key)||new Set();
+      const hasLegacyLink=Boolean(item.surgery_id || item.surgery_group_id || item.legacy_surgery_id);
+      const sharesAnchoredLaunch=Boolean(item.group_id && anchoredLaunchGroups.has(item.group_id));
+
+      if(hasLegacyLink || sharesAnchoredLaunch){
+        if(!linkedByPatientDate.has(key)) linkedByPatientDate.set(key,[]);
+        linkedByPatientDate.get(key).push(item);
+      }
+    });
+
+    const enrichedSurgeries=groupedSurgeries.map(item=>{
+      const surgeryId=item.db_ids?.[0]||'';
+      const direct=linkedBySurgeryId.get(surgeryId)||[];
+
+      // Vínculo pelo grupo atual da cirurgia. Só é usado quando esse grupo contém
+      // uma única cirurgia, evitando misturar dois atos cirúrgicos distintos.
+      const byGroup=surgeryGroupCount.get(item.group_id)===1
+        ? (linkedByGroup.get(item.group_id)||[])
+        : [];
+
+      // Compatibilidade histórica: recupera Botox, Bioestimulador, Laser CO2 etc.
+      // que pertencem ao pacote, mas ficaram com identificadores antigos/diferentes.
+      // A associação por paciente + data só acontece quando existe uma única cirurgia.
+      const patientDateKey=`${item.patient_id||''}|${item.date||''}`;
+      const sameDaySurgeries=surgeryByPatientDate.get(patientDateKey)||[];
+      const byPatientDate=sameDaySurgeries.length===1
+        ? (linkedByPatientDate.get(patientDateKey)||[])
+        : [];
+
+      const linked=[...direct,...byGroup,...byPatientDate]
+        .filter(row=>knownCatalogKind(row.procedure)!=='surgery')
+        .filter((row,index,arr)=>arr.findIndex(x=>x.id===row.id)===index);
+
+      if(!linked.length) return item;
+      const procedureIds=[...new Set(linked.map(x=>x.procedure_id).filter(Boolean))];
+      const procedureNames=[...new Set(linked.map(x=>x.procedure).filter(Boolean))];
+      return {
+        ...item,
+        procedure_ids:procedureIds,
+        procedure_names:procedureNames,
+        procedure:procedureNames.join(' • ')
+      };
+    });
+
     setRecords(groupLaunchRows(examsRes.data||[],'exam'));
-    setSurgeries(groupLaunchRows(surgeriesRes.data||[],'surgery'));
+    setSurgeries(enrichedSurgeries);
+    setProcedureRecords(mappedProcedures);
     setFollowups(followupsRes?.data || []);
     setLoading(false);
   };
@@ -589,22 +875,48 @@ function App(){
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
 
+  const buildLinkedProcedureRows = ({procedureIds,patient_id,surgery_id,surgery_group_id,sourceForm,launcherName,launchGroupId}) => {
+    // Todos os procedimentos escolhidos juntos compartilham o mesmo lançamento.
+    // No banco continuam sendo linhas individuais para a contagem correta.
+    const launch_group_id=launchGroupId||crypto.randomUUID();
+    return (procedureIds||[]).map(procedureId=>({
+      launch_group_id,
+      procedure_date:sourceForm.date,
+      patient_id,
+      doctor_id:sourceForm.doctor_id,
+      indicated_by_doctor_id:sourceForm.indicated_by_doctor_id||null,
+      procedure_id:procedureId,
+      surgery_id:surgery_id||null,
+      surgery_group_id:surgery_group_id||null,
+      eye:sourceForm.eye||'Não se aplica',
+      insurance_id:sourceForm.insurance_id||null,
+      status:sourceForm.status||'Solicitação',
+      procedure_time:sourceForm.time||null,
+      payment_status:sourceForm.payment||'Não informado',
+      observation:sourceForm.obs||null,
+      launched_by:session.user.id,
+      launched_by_name:launcherName
+    }));
+  };
+
   const addSurgery = async ()=>{
     if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
-      return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
+    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.surgery_type_id)
+      return alert('Preencha data, paciente, cirurgião e selecione a cirurgia.');
 
     try{
       const patient_id=await getOrCreatePatient(sForm.patient,sForm.whatsapp);
       const launch_group_id=crypto.randomUUID();
 
-      const rows=sForm.procedure_ids.map(procedureId=>({
+      // V15: uma única linha em surgeries = uma cirurgia.
+      const {data:surgeryRow,error}=await supabase.from('surgeries').insert({
         launch_group_id,
         surgery_date:sForm.date,
         patient_id,
         doctor_id:sForm.doctor_id,
         indicated_by_doctor_id:sForm.indicated_by_doctor_id||null,
-        procedure_id:procedureId,
+        surgery_type_id:sForm.surgery_type_id,
+        procedure_id:null,
         eye:sForm.eye,
         insurance_id:sForm.insurance_id||null,
         status:sForm.status,
@@ -614,21 +926,36 @@ function App(){
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:surgeryLaunchName
-      }));
-
-      const {error}=await supabase.from('surgeries').insert(rows);
+      }).select('id').single();
       if(error) throw error;
+
+      // Procedimentos do pacote são gravados no módulo Procedimentos e apenas vinculados à cirurgia.
+      const linkedRows=buildLinkedProcedureRows({
+        procedureIds:sForm.procedure_ids,
+        patient_id,
+        surgery_id:surgeryRow.id,
+        surgery_group_id:launch_group_id,
+        sourceForm:sForm,
+        launcherName:surgeryLaunchName
+      });
+      if(linkedRows.length){
+        const {error:procedureError}=await supabase.from('procedure_records').insert(linkedRows);
+        if(procedureError){
+          console.error(procedureError);
+          alert('A cirurgia foi salva, mas não foi possível vincular os procedimentos. Verifique se o SQL V16 foi aplicado.');
+        }
+      }
 
       setSurgeryModal(false);
       setSForm({
-        date:todayISO(),patient:'',whatsapp:'',doctor_id:'',procedure_ids:[],
+        date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],
         eye:'Não se aplica',insurance_id:'',status:'Solicitação',
         arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''
       });
       await loadAll();
     }catch(e){
       console.error(e);
-      alert('Não foi possível salvar os procedimentos cirúrgicos.');
+      alert('Não foi possível salvar a cirurgia.');
     }
   };
 
@@ -657,6 +984,7 @@ function App(){
       whatsapp:r.whatsapp || '',
       doctor_id:r.doctor_id,
       indicated_by_doctor_id:r.indicatedById||'',
+      surgery_type_id:r.surgery_type_id||'',
       procedure_ids:r.procedure_ids||[],
       eye:r.eye || 'Não se aplica',
       insurance_id:r.insurance_id || '',
@@ -669,6 +997,27 @@ function App(){
     });
     setSurgeryModal(true);
   };
+
+  const openEditProcedure = r => {
+    setEditingProcedureId(r.group_key||r.id);
+    setPForm({
+      date:r.date,
+      patient:r.patient,
+      whatsapp:r.whatsapp||'',
+      doctor_id:r.doctor_id,
+      indicated_by_doctor_id:r.indicatedById||'',
+      procedure_ids:r.procedure_ids?.length?r.procedure_ids:(r.procedure_id?[r.procedure_id]:[]),
+      eye:r.eye||'Não se aplica',
+      insurance_id:r.insurance_id||'',
+      status:r.status||'Solicitação',
+      time:r.time||'',
+      payment:r.payment||'Não informado',
+      launcher:r.launchedByName||currentLaunchName||'',
+      obs:r.obs||''
+    });
+    setProcedureModal(true);
+  };
+
 
   const updatePatient = async (patientId,name,whatsapp) => {
     if(!patientId) return;
@@ -722,21 +1071,29 @@ function App(){
     const original = surgeries.find(r=>r.id===editingSurgeryId);
     if(!original) return;
     if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.procedure_ids?.length)
-      return alert('Preencha data, paciente, cirurgião e selecione pelo menos um procedimento.');
+    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.surgery_type_id)
+      return alert('Preencha data, paciente, cirurgião e selecione a cirurgia.');
 
     try{
       await updatePatient(original.patient_id, sForm.patient, sForm.whatsapp);
 
+      // Remove somente os procedimentos vinculados a ESTA cirurgia.
+      const originalSurgeryId=original.db_ids?.[0]||original.id;
+      const {error:deleteProcedureError}=await supabase.from('procedure_records').delete().eq('surgery_id',originalSurgeryId);
+      if(deleteProcedureError) throw deleteProcedureError;
+
       const {error:deleteError}=await supabase.from('surgeries').delete().in('id',original.db_ids);
       if(deleteError) throw deleteError;
 
-      const rows=sForm.procedure_ids.map(procedureId=>({
+      // Recria como uma única cirurgia, mantendo o mesmo group_id para preservar o Follow-up.
+      const {data:surgeryRow,error}=await supabase.from('surgeries').insert({
         launch_group_id:original.group_id,
         surgery_date:sForm.date,
         patient_id:original.patient_id,
         doctor_id:sForm.doctor_id,
-        procedure_id:procedureId,
+        indicated_by_doctor_id:sForm.indicated_by_doctor_id||null,
+        surgery_type_id:sForm.surgery_type_id,
+        procedure_id:null,
         eye:sForm.eye,
         insurance_id:sForm.insurance_id||null,
         status:sForm.status,
@@ -746,20 +1103,117 @@ function App(){
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:surgeryLaunchName
-      }));
-
-      const {error}=await supabase.from('surgeries').insert(rows);
+      }).select('id').single();
       if(error) throw error;
+
+      const linkedRows=buildLinkedProcedureRows({
+        procedureIds:sForm.procedure_ids,
+        patient_id:original.patient_id,
+        surgery_id:surgeryRow.id,
+        surgery_group_id:original.group_id,
+        sourceForm:sForm,
+        launcherName:surgeryLaunchName
+      });
+      if(linkedRows.length){
+        const {error:procedureError}=await supabase.from('procedure_records').insert(linkedRows);
+        if(procedureError){
+          console.error(procedureError);
+          alert('A cirurgia foi atualizada, mas não foi possível recriar os procedimentos vinculados. Verifique o SQL V16.');
+        }
+      }
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
       await loadAll();
     }catch(e){
       console.error(e);
       alert('Não foi possível atualizar o lançamento cirúrgico.');
     }
   };
+
+  const addProcedure = async ()=>{
+    if(!procedureLaunchName) return alert('Selecione quem está fazendo o lançamento.');
+    if(!pForm.date||!pForm.patient.trim()||!pForm.doctor_id||!pForm.procedure_ids?.length)
+      return alert('Preencha data, paciente, médico e selecione pelo menos um procedimento.');
+    try{
+      const patient_id=await getOrCreatePatient(pForm.patient,pForm.whatsapp);
+      const launch_group_id=crypto.randomUUID();
+      const rows=pForm.procedure_ids.map(procedureId=>({
+        launch_group_id,
+        procedure_date:pForm.date,
+        patient_id,
+        doctor_id:pForm.doctor_id,
+        indicated_by_doctor_id:pForm.indicated_by_doctor_id||null,
+        procedure_id:procedureId,
+        surgery_id:null,
+        surgery_group_id:null,
+        eye:pForm.eye,
+        insurance_id:pForm.insurance_id||null,
+        status:pForm.status,
+        procedure_time:pForm.time||null,
+        payment_status:pForm.payment,
+        observation:pForm.obs||null,
+        launched_by:session.user.id,
+        launched_by_name:procedureLaunchName
+      }));
+      const {error}=await supabase.from('procedure_records').insert(rows);
+      if(error) throw error;
+      setProcedureModal(false);
+      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      await loadAll();
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível salvar o procedimento.');
+    }
+  };
+
+  const updateProcedure = async ()=>{
+    const original=procedureLaunchRows.find(r=>(r.group_key||r.id)===editingProcedureId);
+    if(!original) return;
+    if(!procedureLaunchName) return alert('Selecione quem está fazendo o lançamento.');
+    if(!pForm.date||!pForm.patient.trim()||!pForm.doctor_id||!pForm.procedure_ids?.length)
+      return alert('Preencha data, paciente, médico e selecione pelo menos um procedimento.');
+    try{
+      await updatePatient(original.patient_id,pForm.patient,pForm.whatsapp);
+
+      const ids=original.db_ids?.length?original.db_ids:[original.id];
+      const {error:deleteError}=await supabase.from('procedure_records').delete().in('id',ids);
+      if(deleteError) throw deleteError;
+
+      const launch_group_id=original.group_id||crypto.randomUUID();
+      const rows=pForm.procedure_ids.map(procedureId=>({
+        launch_group_id,
+        procedure_date:pForm.date,
+        patient_id:original.patient_id,
+        doctor_id:pForm.doctor_id,
+        indicated_by_doctor_id:pForm.indicated_by_doctor_id||null,
+        procedure_id:procedureId,
+        surgery_id:original.surgery_id||null,
+        surgery_group_id:original.surgery_group_id||null,
+        eye:pForm.eye,
+        insurance_id:pForm.insurance_id||null,
+        status:pForm.status,
+        procedure_time:pForm.time||null,
+        payment_status:pForm.payment,
+        observation:pForm.obs||null,
+        launched_by:session.user.id,
+        launched_by_name:procedureLaunchName
+      }));
+
+      const {error}=await supabase.from('procedure_records').insert(rows);
+      if(error) throw error;
+
+      setProcedureModal(false);
+      setEditingProcedureId(null);
+      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      await loadAll();
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível atualizar o lançamento de procedimentos.');
+    }
+  };
+
 
   const closeExamModal = ()=>{
     setExamModal(false);
@@ -770,7 +1224,13 @@ function App(){
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+  };
+
+  const closeProcedureModal = ()=>{
+    setProcedureModal(false);
+    setEditingProcedureId(null);
+    setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
   };
 
   const delExam = async id=>{
@@ -781,19 +1241,75 @@ function App(){
     await loadAll();
   };
   const delSurgery = async id=>{
-    if(!confirm('Tem certeza que deseja excluir este lançamento cirúrgico? Essa ação não poderá ser desfeita.')) return;
+    if(!confirm('Tem certeza que deseja excluir este lançamento cirúrgico? Os procedimentos vinculados a esta cirurgia também serão excluídos.')) return;
     const item=surgeries.find(r=>r.id===id);
-    const {error}=await supabase.from('surgeries').delete().in('id',item?.db_ids||[id]);
+    const surgeryIds=item?.db_ids||[id];
+    const {error:procedureError}=await supabase.from('procedure_records').delete().in('surgery_id',surgeryIds);
+    if(procedureError) return alert('Não foi possível excluir os procedimentos vinculados.');
+    const {error}=await supabase.from('surgeries').delete().in('id',surgeryIds);
     if(error) return alert('Não foi possível excluir. Verifique as permissões do seu usuário no Supabase.');
+    await loadAll();
+  };
+  const delProcedure = async item=>{
+    const qty=item?.db_ids?.length||1;
+    if(!confirm(`Tem certeza que deseja excluir este lançamento com ${qty} procedimento(s)?`)) return;
+    const ids=item?.db_ids?.length?item.db_ids:[item?.id];
+    const {error}=await supabase.from('procedure_records').delete().in('id',ids);
+    if(error) return alert('Não foi possível excluir o lançamento de procedimentos.');
     await loadAll();
   };
 
   const addCatalog = async (table,name,extra={})=>{
     const clean=name.trim();
-    if(!clean) return;
+    if(!clean) return false;
+
+    // Protege os dois catálogos contra os erros já encontrados no histórico.
+    const knownKind=knownCatalogKind(clean);
+    if(table==='surgery_types' && knownKind==='procedure'){
+      alert(`“${clean}” é um procedimento. Cadastre em Procedimentos, não em Cirurgias.`);
+      return false;
+    }
+    if(table==='procedures' && knownKind==='surgery'){
+      alert(`“${clean}” é uma cirurgia. Cadastre em Cirurgias, não em Procedimentos.`);
+      return false;
+    }
+
+    // Se o nome já existia e foi apenas desativado durante o alinhamento,
+    // reaproveita o mesmo cadastro em vez de gerar erro/duplicidade.
+    const {data:existing,error:lookupError}=await supabase.from(table)
+      .select('id,active,name')
+      .ilike('name',clean)
+      .limit(1)
+      .maybeSingle();
+    if(lookupError){
+      console.error(lookupError);
+      alert(`Não foi possível verificar o cadastro “${clean}”.`);
+      return false;
+    }
+    if(existing?.id){
+      if(existing.active){
+        alert(`“${existing.name}” já está cadastrado nesta lista.`);
+        return false;
+      }
+      const {error:reactivateError}=await supabase.from(table).update({active:true}).eq('id',existing.id);
+      if(reactivateError){
+        console.error(reactivateError);
+        alert(`Não foi possível reativar “${clean}”.`);
+        return false;
+      }
+      await loadAll();
+      return true;
+    }
+
     const {error}=await supabase.from(table).insert({name:clean,...extra});
-    if(error) return alert(error.message);
+    if(error){
+      console.error(error);
+      if(error.code==='23505') alert(`Já existe um cadastro com o nome “${clean}” nesta lista.`);
+      else alert(`Não foi possível cadastrar “${clean}”. ${error.message||''}`.trim());
+      return false;
+    }
     await loadAll();
+    return true;
   };
   const deactivateCatalog = async (table,id)=>{
     if(!confirm('Remover este item da lista? Os lançamentos antigos serão preservados.')) return;
@@ -802,17 +1318,53 @@ function App(){
     await loadAll();
   };
 
-  const filteredExams = useMemo(()=>records.filter(r=>
-    (!filterMonth||r.date.startsWith(filterMonth)) &&
-    (!filterDoctor||r.doctor_id===filterDoctor) &&
-    (!filterExam||r.exam_type_ids?.includes(filterExam))
-  ),[records,filterMonth,filterDoctor,filterExam]);
+  const filteredExams = useMemo(()=>{
+    const q=examSearch.trim().toLowerCase();
+    return records.filter(r=>
+      (!filterMonth||r.date.startsWith(filterMonth)) &&
+      (!filterDoctor||r.doctor_id===filterDoctor) &&
+      (!filterExam||r.exam_type_ids?.includes(filterExam)) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.whatsapp||'').includes(q))
+    );
+  },[records,filterMonth,filterDoctor,filterExam,examSearch]);
 
-  const filteredSurgeries = useMemo(()=>surgeries.filter(r=>
-    (!sMonth||r.date.startsWith(sMonth)) &&
-    (!sDoctor||r.doctor_id===sDoctor) &&
-    (!sProcedure||r.procedure_ids?.includes(sProcedure))
-  ),[surgeries,sMonth,sDoctor,sProcedure]);
+  const filteredSurgeries = useMemo(()=>{
+    const q=sSearch.trim().toLowerCase();
+    return surgeries.filter(r=>
+      (!sMonth||r.date.startsWith(sMonth)) &&
+      (!sDoctor||r.doctor_id===sDoctor) &&
+      (!sSurgeryType||r.surgery_type_id===sSurgeryType) &&
+      (!sProcedure||r.procedure_ids?.includes(sProcedure)) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.whatsapp||'').includes(q))
+    );
+  },[surgeries,sMonth,sDoctor,sSurgeryType,sProcedure,sSearch]);
+
+  const procedureLaunchRows = useMemo(()=>groupProcedureRows(procedureRecords),[procedureRecords]);
+
+  // Dados individuais: usados nos KPIs/Resultados para que 3 procedimentos = 3.
+  const filteredProcedures = useMemo(()=>{
+    const q=pSearch.trim().toLowerCase();
+    return procedureRecords.filter(r=>
+      (!pMonth||r.date?.startsWith(pMonth)) &&
+      (!pDoctor||r.doctor_id===pDoctor) &&
+      (!pProcedure||r.procedure_id===pProcedure) &&
+      (!pStatus||r.status===pStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.whatsapp||'').includes(q))
+    );
+  },[procedureRecords,pMonth,pDoctor,pProcedure,pStatus,pSearch]);
+
+  // Visualização agrupada: mesma paciente/pacote/data aparece em UM lançamento.
+  // O filtro de procedimento localiza o pacote, mas exibe todos os procedimentos dele.
+  const filteredProcedureLaunches = useMemo(()=>{
+    const q=pSearch.trim().toLowerCase();
+    return procedureLaunchRows.filter(r=>
+      (!pMonth||r.date?.startsWith(pMonth)) &&
+      (!pDoctor||r.doctor_id===pDoctor) &&
+      (!pProcedure||r.procedure_ids?.includes(pProcedure)) &&
+      (!pStatus||r.status===pStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.whatsapp||'').includes(q))
+    );
+  },[procedureLaunchRows,pMonth,pDoctor,pProcedure,pStatus,pSearch]);
 
   const deleteFilteredExams = async ()=>{
     if(!filteredExams.length) return alert('Nenhum exame encontrado com os filtros atuais.');
@@ -836,10 +1388,18 @@ function App(){
   const deleteFilteredSurgeries = async ()=>{
     if(!filteredSurgeries.length) return alert('Nenhuma cirurgia encontrada com os filtros atuais.');
 
-    const message = `Você está prestes a excluir ${filteredSurgeries.length} lançamento(s) de cirurgias exibidos pelos filtros atuais. Essa ação não poderá ser desfeita. Deseja continuar?`;
+    const message = `Você está prestes a excluir ${filteredSurgeries.length} cirurgia(s) exibida(s) pelos filtros atuais. Os procedimentos vinculados a esses pacotes também serão excluídos. Deseja continuar?`;
     if(!confirm(message)) return;
 
     const ids = [...new Set(filteredSurgeries.flatMap(item=>item.db_ids||[]))];
+    if(ids.length){
+      const {error:procedureError}=await supabase.from('procedure_records').delete().in('surgery_id',ids);
+      if(procedureError){
+        console.error(procedureError);
+        return alert('Não foi possível excluir os procedimentos vinculados.');
+      }
+    }
+
     if(!ids.length) return alert('Não foi possível identificar as cirurgias para exclusão.');
 
     const {error}=await supabase.from('surgeries').delete().in('id',ids);
@@ -851,6 +1411,21 @@ function App(){
     await loadAll();
     alert('Cirurgias filtradas excluídas com sucesso.');
   };
+
+  const deleteFilteredProcedures = async ()=>{
+    if(!filteredProcedures.length) return alert('Nenhum procedimento encontrado com os filtros atuais.');
+    const message=`Você está prestes a excluir ${filteredProcedures.length} procedimento(s) exibido(s). Deseja continuar?`;
+    if(!confirm(message)) return;
+    const ids=filteredProcedures.map(item=>item.id);
+    const {error}=await supabase.from('procedure_records').delete().in('id',ids);
+    if(error){
+      console.error(error);
+      return alert('Não foi possível excluir os procedimentos filtrados.');
+    }
+    await loadAll();
+    alert('Procedimentos filtrados excluídos com sucesso.');
+  };
+
 
   const followupSourceRows = useMemo(()=>{
     const byKey=new Map(followups.map(f=>[`${f.source_type}:${f.source_group_id}`,f]));
@@ -880,7 +1455,7 @@ function App(){
       source_date:r.date,
       doctor:r.doctor,
       doctor_id:r.doctor_id,
-      item:r.procedure,
+      item:`${r.surgery_type}${r.procedure&&r.procedure!=='Sem procedimentos vinculados'?` • ${r.procedure}`:''}`,
       source_status:r.status,
       followup:byKey.get(`surgery:${r.group_id||r.id}`)||null
     }));
@@ -963,19 +1538,38 @@ function App(){
     }
   };
 
-  const dashboardExams = useMemo(()=>records.filter(r=>
-    (!dashMonth||r.date.startsWith(dashMonth)) &&
-    (!dashDoctor||r.doctor_id===dashDoctor) &&
-    (!dashUser||r.launchedByName===dashUser) &&
-    (!dashStatus||r.status===dashStatus)
-  ),[records,dashMonth,dashDoctor,dashUser,dashStatus]);
+  const dashboardExams = useMemo(()=>{
+    const q=dashPatient.trim().toLowerCase();
+    return records.filter(r=>
+      (!dashMonth||r.date.startsWith(dashMonth)) &&
+      (!dashDoctor||r.doctor_id===dashDoctor) &&
+      (!dashUser||r.launchedByName===dashUser) &&
+      (!dashStatus||r.status===dashStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q))
+    );
+  },[records,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
 
-  const dashboardSurgeries = useMemo(()=>surgeries.filter(r=>
-    (!dashMonth||r.date.startsWith(dashMonth)) &&
-    (!dashDoctor||r.doctor_id===dashDoctor) &&
-    (!dashUser||r.launchedByName===dashUser) &&
-    (!dashStatus||r.status===dashStatus)
-  ),[surgeries,dashMonth,dashDoctor,dashUser,dashStatus]);
+  const dashboardSurgeries = useMemo(()=>{
+    const q=dashPatient.trim().toLowerCase();
+    return surgeries.filter(r=>
+      (!dashMonth||r.date.startsWith(dashMonth)) &&
+      (!dashDoctor||r.doctor_id===dashDoctor) &&
+      (!dashUser||r.launchedByName===dashUser) &&
+      (!dashStatus||r.status===dashStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q))
+    );
+  },[surgeries,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
+
+  const dashboardProcedures = useMemo(()=>{
+    const q=dashPatient.trim().toLowerCase();
+    return procedureRecords.filter(r=>
+      (!dashMonth||r.date?.startsWith(dashMonth)) &&
+      (!dashDoctor||r.doctor_id===dashDoctor) &&
+      (!dashUser||r.launchedByName===dashUser) &&
+      (!dashStatus||r.status===dashStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q))
+    );
+  },[procedureRecords,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
 
   const launchedName = record => record.launchedByName || (profiles.find(p=>p.id===record.launchedBy)?.role==='admin' ? 'ADM' : 'Orientadora');
 
@@ -983,14 +1577,16 @@ function App(){
     key:name,
     name,
     exams:totalItems(dashboardExams.filter(x=>launchedName(x)===name),'exam_type_ids'),
-    surgeries:totalItems(dashboardSurgeries.filter(x=>launchedName(x)===name),'procedure_ids')
+    surgeries:dashboardSurgeries.filter(x=>launchedName(x)===name).length,
+    procedures:dashboardProcedures.filter(x=>launchedName(x)===name).length
   }));
 
   const currentAccessName = currentLaunchName || 'Selecione quem está lançando';
 
   const resultSummary=useMemo(()=>{
     const totalEx=totalItems(dashboardExams,'exam_type_ids');
-    const totalSu=totalItems(dashboardSurgeries,'procedure_ids');
+    const totalSu=dashboardSurgeries.length; // 1 launch_group_id = 1 cirurgia
+    const totalProcedures=dashboardProcedures.length;
 
     const exAgendado=totalItemsByStatus(dashboardExams,'exam_type_ids','Agendado');
     const exPendente=totalItemsByStatus(dashboardExams,'exam_type_ids','Pendente');
@@ -998,53 +1594,62 @@ function App(){
     const exCancelado=totalItemsByStatus(dashboardExams,'exam_type_ids','Cancelado');
     const exOpen=exAgendado+exPendente;
 
-    const suSolicitacao=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Solicitação');
-    const suPendente=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Pendente');
-    const suAutorizada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Autorizada');
-    const suAgendada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Agendada');
-    const realSu=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Realizada');
-    const suCancelada=totalItemsByStatus(dashboardSurgeries,'procedure_ids','Cancelada');
+    const suSolicitacao=countRowsByStatus(dashboardSurgeries,'Solicitação');
+    const suPendente=countRowsByStatus(dashboardSurgeries,'Pendente');
+    const suAutorizada=countRowsByStatus(dashboardSurgeries,'Autorizada');
+    const suAgendada=countRowsByStatus(dashboardSurgeries,'Agendada');
+    const realSu=countRowsByStatus(dashboardSurgeries,'Realizada');
+    const suCancelada=countRowsByStatus(dashboardSurgeries,'Cancelada');
     const suOpen=suSolicitacao+suPendente+suAutorizada+suAgendada;
 
-    const paymentCounts=countWeightedBy(dashboardSurgeries,'payment','procedure_ids');
+    const prSolicitacao=countRowsByStatus(dashboardProcedures,'Solicitação');
+    const prPendente=countRowsByStatus(dashboardProcedures,'Pendente');
+    const prAutorizada=countRowsByStatus(dashboardProcedures,'Autorizada');
+    const prAgendada=countRowsByStatus(dashboardProcedures,'Agendada');
+    const realProcedures=countRowsByStatus(dashboardProcedures,'Realizada');
+    const prCancelada=countRowsByStatus(dashboardProcedures,'Cancelada');
+    const prOpen=prSolicitacao+prPendente+prAutorizada+prAgendada;
+
+    const paymentCounts=countBy(dashboardSurgeries,'payment');
     const paymentPending=(paymentCounts['Pendente']||0)+(paymentCounts['20% pago']||0)+(paymentCounts['Não informado']||0);
     const paymentClosed=(paymentCounts['Pago']||0)+(paymentCounts['Convênio']||0);
 
     const examTop=Object.entries(countManyBy(dashboardExams,'exam_names')).sort((a,b)=>b[1]-a[1])[0];
-    const surgTop=Object.entries(countManyBy(dashboardSurgeries,'procedure_names')).sort((a,b)=>b[1]-a[1])[0];
-    const doctorTop=Object.entries(countWeightedBy(
-      [...dashboardExams.map(x=>({...x,_items:x.exam_type_ids})),...dashboardSurgeries.map(x=>({...x,_items:x.procedure_ids}))],
-      'doctor',
-      '_items'
-    )).sort((a,b)=>b[1]-a[1])[0];
+    const surgTop=Object.entries(countBy(dashboardSurgeries,'surgery_type')).sort((a,b)=>b[1]-a[1])[0];
+    const procedureTop=Object.entries(countBy(dashboardProcedures,'procedure')).sort((a,b)=>b[1]-a[1])[0];
+
+    const professionalCounts={};
+    dashboardExams.forEach(r=>{ professionalCounts[r.doctor||'Não informado']=(professionalCounts[r.doctor||'Não informado']||0)+(r.exam_type_ids?.length||0); });
+    dashboardSurgeries.forEach(r=>{ professionalCounts[r.doctor||'Não informado']=(professionalCounts[r.doctor||'Não informado']||0)+1; });
+    dashboardProcedures.forEach(r=>{ professionalCounts[r.doctor||'Não informado']=(professionalCounts[r.doctor||'Não informado']||0)+1; });
+    const doctorTop=Object.entries(professionalCounts).sort((a,b)=>b[1]-a[1])[0];
 
     const insuranceTop=Object.entries(
-      countWeightedBy(
-        dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),
-        'insuranceLabel',
-        'procedure_ids'
-      )
+      countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel')
     ).sort((a,b)=>b[1]-a[1])[0];
 
     const uniquePatients=new Set(
-      [...dashboardExams,...dashboardSurgeries]
+      [...dashboardExams,...dashboardSurgeries,...dashboardProcedures]
         .map(x=>`${String(x.patient||'').trim().toLowerCase()}|${normalizePhone(x.whatsapp)}`)
         .filter(x=>x!=='|')
     ).size;
 
     return {
-      totalEx,totalSu,realEx,realSu,
+      totalEx,totalSu,totalProcedures,realEx,realSu,realProcedures,
       exAgendado,exPendente,exCancelado,exOpen,
       suSolicitacao,suPendente,suAutorizada,suAgendada,suCancelada,suOpen,
+      prSolicitacao,prPendente,prAutorizada,prAgendada,prCancelada,prOpen,
       paymentCounts,paymentPending,paymentClosed,
-      examTop,surgTop,doctorTop,insuranceTop,uniquePatients,
+      examTop,surgTop,procedureTop,doctorTop,insuranceTop,uniquePatients,
       exRate:percentOf(realEx,totalEx),
       suRate:percentOf(realSu,totalSu),
+      procedureRate:percentOf(realProcedures,totalProcedures),
       exOpenRate:percentOf(exOpen,totalEx),
       suOpenRate:percentOf(suOpen,totalSu),
+      procedureOpenRate:percentOf(prOpen,totalProcedures),
       paymentPendingRate:percentOf(paymentPending,totalSu)
     };
-  },[dashboardExams,dashboardSurgeries]);
+  },[dashboardExams,dashboardSurgeries,dashboardProcedures]);
 
   const advancedAnalytics=useMemo(()=>{
     const baseMonth=dashMonth||monthNow;
@@ -1064,7 +1669,7 @@ function App(){
     const byMonth=(arr,month)=>arr.filter(r=>r.date?.startsWith(month));
 
     const examTrend=months.map(month=>totalItems(byMonth(baseExamRows,month),'exam_type_ids'));
-    const surgeryTrend=months.map(month=>totalItems(byMonth(baseSurgeryRows,month),'procedure_ids'));
+    const surgeryTrend=months.map(month=>byMonth(baseSurgeryRows,month).length);
     const examConversion=months.map(month=>{
       const rows=byMonth(baseExamRows,month);
       const total=totalItems(rows,'exam_type_ids');
@@ -1073,8 +1678,8 @@ function App(){
     });
     const surgeryConversion=months.map(month=>{
       const rows=byMonth(baseSurgeryRows,month);
-      const total=totalItems(rows,'procedure_ids');
-      const done=totalItemsByStatus(rows,'procedure_ids','Realizada');
+      const total=rows.length;
+      const done=countRowsByStatus(rows,'Realizada');
       return percentOf(done,total);
     });
 
@@ -1085,13 +1690,13 @@ function App(){
 
     const currentExamTotal=totalItems(currentExamRows,'exam_type_ids');
     const previousExamTotal=totalItems(previousExamRows,'exam_type_ids');
-    const currentSurgeryTotal=totalItems(currentSurgeryRows,'procedure_ids');
-    const previousSurgeryTotal=totalItems(previousSurgeryRows,'procedure_ids');
+    const currentSurgeryTotal=currentSurgeryRows.length;
+    const previousSurgeryTotal=previousSurgeryRows.length;
 
     const currentExamDone=totalItemsByStatus(currentExamRows,'exam_type_ids','Realizado');
     const previousExamDone=totalItemsByStatus(previousExamRows,'exam_type_ids','Realizado');
-    const currentSurgeryDone=totalItemsByStatus(currentSurgeryRows,'procedure_ids','Realizada');
-    const previousSurgeryDone=totalItemsByStatus(previousSurgeryRows,'procedure_ids','Realizada');
+    const currentSurgeryDone=countRowsByStatus(currentSurgeryRows,'Realizada');
+    const previousSurgeryDone=countRowsByStatus(previousSurgeryRows,'Realizada');
 
     const examStatuses=['Realizado','Agendado','Pendente','Cancelado'];
     const surgeryStatuses=['Realizada','Agendada','Autorizada','Pendente','Solicitação','Cancelada'];
@@ -1103,7 +1708,7 @@ function App(){
 
     const surgeryByStatusType=Object.fromEntries(surgeryStatuses.map(status=>[
       status,
-      countManyBy(dashboardSurgeries.filter(r=>r.status===status),'procedure_names')
+      countBy(dashboardSurgeries.filter(r=>r.status===status),'surgery_type')
     ]));
 
     const examStatusTotals=Object.fromEntries(examStatuses.map(status=>[
@@ -1111,7 +1716,13 @@ function App(){
     ]));
 
     const surgeryStatusTotals=Object.fromEntries(surgeryStatuses.map(status=>[
-      status,totalItemsByStatus(dashboardSurgeries,'procedure_ids',status)
+      status,countRowsByStatus(dashboardSurgeries,status)
+    ]));
+    const procedureStatusTotals=Object.fromEntries(surgeryStatuses.map(status=>[
+      status,dashboardProcedures.filter(r=>r.status===status).length
+    ]));
+    const procedureByStatusType=Object.fromEntries(surgeryStatuses.map(status=>[
+      status,countBy(dashboardProcedures.filter(r=>r.status===status),'procedure')
     ]));
 
     const examStatusPie=examStatusTotals;
@@ -1137,7 +1748,8 @@ function App(){
     };
 
     const examByDoctor=buildDoctorRows(dashboardExams,'exam_names','doctor');
-    const surgeryByDoctor=buildDoctorRows(dashboardSurgeries,'procedure_names','doctor');
+    const surgeryByDoctor=buildDoctorRows(dashboardSurgeries,'surgery_type_names','doctor');
+    const procedureByDoctor=buildDoctorRows(dashboardProcedures.map(r=>({...r,procedure_names:[r.procedure]})),'procedure_names','doctor');
 
     const examByIndication=buildDoctorRows(
       dashboardExams.filter(r=>r.indicatedBy),
@@ -1147,7 +1759,7 @@ function App(){
 
     const surgeryByIndication=buildDoctorRows(
       dashboardSurgeries.filter(r=>r.indicatedBy),
-      'procedure_names',
+      'surgery_type_names',
       'indicatedBy'
     );
 
@@ -1178,14 +1790,13 @@ function App(){
 
     dashboardSurgeries.forEach(record=>{
       const row=ensureConversionDoctor(record.doctor);
-      const weight=Array.isArray(record.procedure_ids)?record.procedure_ids.length:0;
-      row.surgeryTotal+=weight;
-      if(record.status==='Realizada') row.surgeryDone+=weight;
-      else if(record.status==='Agendada') row.surgeryScheduled+=weight;
-      else if(record.status==='Autorizada') row.surgeryAuthorized+=weight;
-      else if(record.status==='Pendente') row.surgeryPending+=weight;
-      else if(record.status==='Solicitação') row.surgeryRequested+=weight;
-      else if(record.status==='Cancelada') row.surgeryCanceled+=weight;
+      row.surgeryTotal+=1;
+      if(record.status==='Realizada') row.surgeryDone+=1;
+      else if(record.status==='Agendada') row.surgeryScheduled+=1;
+      else if(record.status==='Autorizada') row.surgeryAuthorized+=1;
+      else if(record.status==='Pendente') row.surgeryPending+=1;
+      else if(record.status==='Solicitação') row.surgeryRequested+=1;
+      else if(record.status==='Cancelada') row.surgeryCanceled+=1;
     });
 
     const doctorConversion=[...conversionMap.values()]
@@ -1201,9 +1812,9 @@ function App(){
       baseMonth,previousMonth,months,
       monthLabels:months.map(shortMonthLabel),
       examTrend,surgeryTrend,examConversion,surgeryConversion,
-      examByStatusType,surgeryByStatusType,examStatusTotals,surgeryStatusTotals,
+      examByStatusType,surgeryByStatusType,procedureByStatusType,examStatusTotals,surgeryStatusTotals,procedureStatusTotals,
       examStatusPie,surgeryStatusPie,
-      examByDoctor,surgeryByDoctor,examByIndication,surgeryByIndication,doctorConversion,
+      examByDoctor,surgeryByDoctor,procedureByDoctor,examByIndication,surgeryByIndication,doctorConversion,
       currentExamTotal,previousExamTotal,currentSurgeryTotal,previousSurgeryTotal,
       currentExamRate:percentOf(currentExamDone,currentExamTotal),
       previousExamRate:percentOf(previousExamDone,previousExamTotal),
@@ -1214,7 +1825,7 @@ function App(){
       examRateDelta:percentOf(currentExamDone,currentExamTotal)-percentOf(previousExamDone,previousExamTotal),
       surgeryRateDelta:percentOf(currentSurgeryDone,currentSurgeryTotal)-percentOf(previousSurgeryDone,previousSurgeryTotal)
     };
-  },[records,surgeries,dashboardExams,dashboardSurgeries,dashMonth,dashDoctor,dashUser]);
+  },[records,surgeries,procedureRecords,dashboardExams,dashboardSurgeries,dashboardProcedures,dashMonth,dashDoctor,dashUser]);
 
   const exportExcel = async ()=>{
     const month = dashMonth || 'todos-periodos';
@@ -1532,7 +2143,7 @@ function App(){
       ['Exames por médico',countBy(dashboardExams,'doctor'),'G5:L18'],
       ['Status dos exames',countBy(dashboardExams,'status'),'A20:F33'],
       ['Exames por responsável',countBy(dashboardExams.map(x=>({...x,launcher:launchedName(x)})),'launcher'),'G20:L33'],
-      ['Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),'A35:F48'],
+      ['Cirurgias por tipo',countBy(dashboardSurgeries,'surgery_type'),'A35:F48'],
       ['Cirurgias por cirurgião',countBy(dashboardSurgeries,'doctor'),'G35:L48'],
       ['Status das cirurgias',countBy(dashboardSurgeries,'status'),'A50:F63'],
       ['Cirurgias por convênio',countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel'),'G50:L63']
@@ -1554,7 +2165,7 @@ function App(){
       `Neste período foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} cirurgias, `+
       `com ${resultSummary.uniquePatients} pacientes únicos. A taxa de realização foi de ${resultSummary.exRate}% nos exames `+
       `e ${resultSummary.suRate}% nas cirurgias. O exame com maior volume foi ${resultSummary.examTop?.[0]||'—'} `+
-      `e o procedimento cirúrgico com maior volume foi ${resultSummary.surgTop?.[0]||'—'}.`;
+      `e a cirurgia com maior volume foi ${resultSummary.surgTop?.[0]||'—'}.`;
     wsCharts.getCell('A66').alignment={wrapText:true,vertical:'top'};
     wsCharts.getCell('A66').font={size:11,color:{argb:COLORS.text}};
     wsCharts.getCell('A66').fill={type:'pattern',pattern:'solid',fgColor:{argb:COLORS.soft}};
@@ -1602,19 +2213,19 @@ function App(){
       views:[{state:'frozen',ySplit:3,showGridLines:false}]
     });
 
-    wsSurgeries.mergeCells('A1:M1');
+    wsSurgeries.mergeCells('A1:N1');
     styleTitle(wsSurgeries.getCell('A1'),18);
     wsSurgeries.getCell('A1').value=`CIRURGIAS • ${periodLabel}`;
-    wsSurgeries.mergeCells('A2:M2');
+    wsSurgeries.mergeCells('A2:N2');
     wsSurgeries.getCell('A2').value=`Filtros: Médico ${selectedDoctor} | Responsável ${selectedUser} | Status ${selectedStatus}`;
     wsSurgeries.getCell('A2').font={size:10,color:{argb:COLORS.muted}};
 
     const surgeryHeaders=[
-      'Data','Paciente','WhatsApp','Cirurgião','Procedimento','Olho','Convênio',
+      'Data','Paciente','WhatsApp','Cirurgião','Cirurgia','Procedimentos vinculados','Olho','Convênio',
       'Status','Horário chegada','Horário cirurgia','Pagamento','Lançado por','Observação'
     ];
     const surgeryRows=dashboardSurgeries.map(r=>[
-      brDate(r.date),r.patient,r.whatsapp,r.doctor,r.procedure,r.eye,r.insurance||'Particular',
+      brDate(r.date),r.patient,r.whatsapp,r.doctor,r.surgery_type,r.procedure,r.eye,r.insurance||'Particular',
       r.status,r.arrival,r.time,r.payment,launchedName(r),r.obs
     ]);
 
@@ -1628,10 +2239,10 @@ function App(){
       rows:surgeryRows.length?surgeryRows:[['—','Nenhuma cirurgia no período','','','','','','','','','','','']]
     });
 
-    [13,28,18,24,30,18,22,22,18,18,18,18,45].forEach((w,i)=>wsSurgeries.getColumn(i+1).width=w);
-    wsSurgeries.getColumn(13).alignment={wrapText:true,vertical:'top'};
-    styleStatusCells(wsSurgeries,8,4,3+Math.max(1,surgeryRows.length));
-    wsSurgeries.autoFilter={from:'A3',to:'M3'};
+    [13,28,18,24,25,32,14,22,18,18,18,18,18,45].forEach((w,i)=>wsSurgeries.getColumn(i+1).width=w);
+    wsSurgeries.getColumn(14).alignment={wrapText:true,vertical:'top'};
+    styleStatusCells(wsSurgeries,9,4,3+Math.max(1,surgeryRows.length));
+    wsSurgeries.autoFilter={from:'A3',to:'N3'};
     wsSurgeries.pageSetup={orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0};
 
     // =========================
@@ -2478,21 +3089,21 @@ function App(){
       // PÁGINA 2 — ANÁLISE POR MÉDICO
       // =====================================================
       pdf.addPage('a4','portrait');
-      pageHeader('ANÁLISE POR MÉDICO','Exames por médico e tipo + cirurgias por cirurgião e procedimento.');
+      pageHeader('ANÁLISE POR MÉDICO','Exames por médico e tipo + cirurgias por cirurgião e tipo de cirurgia.');
       y=49;
       drawDoctorColumn(margin,y,half,231,'Exames por médico e tipo',advancedAnalytics.examByDoctor,'Exame');
-      drawDoctorColumn(margin+half+4,y,half,231,'Cirurgias por cirurgião e procedimento',advancedAnalytics.surgeryByDoctor,'Procedimento');
+      drawDoctorColumn(margin+half+4,y,half,231,'Cirurgias por cirurgião e tipo',advancedAnalytics.surgeryByDoctor,'Cirurgia');
 
       // =====================================================
       // PÁGINA 3 — DETALHAMENTO POR STATUS
       // =====================================================
       pdf.addPage('a4','portrait');
-      pageHeader('DETALHAMENTO POR STATUS','Tipos de exame e procedimentos dentro de cada status do período.');
+      pageHeader('DETALHAMENTO POR STATUS','Tipos de exame e tipos de cirurgia dentro de cada status do período.');
       y=49;
       drawStatusColumn(margin,y,half,231,'Exames por status e tipo',
         ['Realizado','Pendente','Agendado','Cancelado'],advancedAnalytics.examByStatusType,advancedAnalytics.examStatusTotals,'Exame');
-      drawStatusColumn(margin+half+4,y,half,231,'Cirurgias por status e procedimento',
-        ['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada'],advancedAnalytics.surgeryByStatusType,advancedAnalytics.surgeryStatusTotals,'Procedimento');
+      drawStatusColumn(margin+half+4,y,half,231,'Cirurgias por status e tipo',
+        ['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada'],advancedAnalytics.surgeryByStatusType,advancedAnalytics.surgeryStatusTotals,'Cirurgia');
 
       // =====================================================
       // PÁGINA 4 — ANÁLISES GERAIS + LANÇAMENTOS
@@ -2515,7 +3126,7 @@ function App(){
 
       pdf.setTextColor(...C.primary);pdf.setFont('helvetica','bold');pdf.setFontSize(7);pdf.text('ANÁLISE DE CIRURGIAS',margin,y);
       y+=4;
-      drawRankingBox(margin,y,boxW,boxH,'Cirurgias por procedimento',topEntries(countManyBy(dashboardSurgeries,'procedure_names')));
+      drawRankingBox(margin,y,boxW,boxH,'Cirurgias por tipo',topEntries(countBy(dashboardSurgeries,'surgery_type')));
       drawRankingBox(margin+boxW+smallGap,y,boxW,boxH,'Cirurgias por cirurgião',topEntries(countBy(dashboardSurgeries,'doctor')));
       y+=boxH+3;
       drawRankingBox(margin,y,boxW,boxH,'Status das cirurgias',topEntries(countBy(dashboardSurgeries,'status')));
@@ -3115,7 +3726,7 @@ function App(){
         {label:'Pacientes unicos',value:resultSummary.uniquePatients,detail:'Pacientes identificados no periodo'},
         {label:'Total de exames',value:resultSummary.totalEx,detail:`${resultSummary.realEx} realizados - ${resultSummary.exRate}% concluido`},
         {label:'Total de cirurgias',value:resultSummary.totalSu,detail:`${resultSummary.realSu} realizadas - ${resultSummary.suRate}% concluido`},
-        {label:'Total operacional',value:resultSummary.totalEx+resultSummary.totalSu,detail:'Exames + procedimentos cirurgicos'}
+        {label:'Total operacional',value:resultSummary.totalEx+resultSummary.totalSu,detail:'Exames + cirurgias'}
       ],4);
 
       drawSection('SITUACAO OPERACIONAL','Separacao clara entre concluido, em aberto e cancelado.');
@@ -3130,15 +3741,15 @@ function App(){
       drawMetricCards([
         {label:'Exames cancelados',value:resultSummary.exCancelado,detail:'Mantidos para leitura gerencial',fill:[251,238,238],border:[238,213,213],valueColor:[166,76,76]},
         {label:'Cirurgias canceladas',value:resultSummary.suCancelada,detail:'Mantidas para leitura gerencial',fill:[251,238,238],border:[238,213,213],valueColor:[166,76,76]},
-        {label:'Financeiro pendente',value:resultSummary.paymentPending,detail:`${resultSummary.paymentPendingRate}% das cirurgias/procedimentos`,fill:[255,247,229],border:[239,220,179],valueColor:[151,104,32]},
-        {label:'Pago / convenio',value:resultSummary.paymentClosed,detail:'Procedimentos com situacao financeira fechada',fill:[237,246,240],border:[211,231,218],valueColor:[62,118,86]}
+        {label:'Financeiro pendente',value:resultSummary.paymentPending,detail:`${resultSummary.paymentPendingRate}% das cirurgias`,fill:[255,247,229],border:[239,220,179],valueColor:[151,104,32]},
+        {label:'Pago / convenio',value:resultSummary.paymentClosed,detail:'Cirurgias com situacao financeira fechada',fill:[237,246,240],border:[211,231,218],valueColor:[62,118,86]}
       ],4);
 
       const quickText=
-        `No periodo foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} procedimentos cirurgicos para ${resultSummary.uniquePatients} pacientes unicos. `+
+        `No periodo foram registrados ${resultSummary.totalEx} exames e ${resultSummary.totalSu} cirurgias para ${resultSummary.uniquePatients} pacientes unicos. `+
         `Nos exames, ${resultSummary.realEx} foram realizados, ${resultSummary.exOpen} permanecem em aberto e ${resultSummary.exCancelado} foram cancelados. `+
         `Nas cirurgias, ${resultSummary.realSu} foram realizadas, ${resultSummary.suOpen} permanecem em fluxo operacional e ${resultSummary.suCancelada} foram canceladas. `+
-        `O exame de maior volume foi ${resultSummary.examTop?.[0]||'nao identificado'} e o procedimento cirurgico mais frequente foi ${resultSummary.surgTop?.[0]||'nao identificado'}.`;
+        `O exame de maior volume foi ${resultSummary.examTop?.[0]||'nao identificado'} e a cirurgia mais frequente foi ${resultSummary.surgTop?.[0]||'nao identificado'}.`;
 
       ensure(24);
       pdf.setFillColor(244,248,249);
@@ -3279,7 +3890,7 @@ function App(){
       // ======================================================
       newPage('CIRURGIAS - SITUACAO E DETALHAMENTO',periodLabel);
 
-      drawStatusPanel('Status das cirurgias / procedimentos',resultSummary.totalSu,[
+      drawStatusPanel('Status das cirurgias',resultSummary.totalSu,[
         {label:'Realizada',value:resultSummary.realSu},
         {label:'Agendada',value:resultSummary.suAgendada},
         {label:'Autorizada',value:resultSummary.suAutorizada},
@@ -3288,7 +3899,7 @@ function App(){
         {label:'Cancelada',value:resultSummary.suCancelada}
       ]);
 
-      drawStatusPanel('Situacao financeira das cirurgias / procedimentos',resultSummary.totalSu,[
+      drawStatusPanel('Situacao financeira das cirurgias',resultSummary.totalSu,[
         {label:'Pago',value:resultSummary.paymentCounts['Pago']||0},
         {label:'Convenio',value:resultSummary.paymentCounts['Convênio']||0},
         {label:'20% pago',value:resultSummary.paymentCounts['20% pago']||0},
@@ -3301,20 +3912,20 @@ function App(){
         ['Realizada','Agendada','Autorizada','Pendente','Solicitação','Cancelada'],
         advancedAnalytics.surgeryByStatusType,
         advancedAnalytics.surgeryStatusTotals,
-        'Procedimento'
+        'Cirurgia'
       );
 
       drawDoctorTypeBreakdown(
-        'CIRURGIAS POR CIRURGIAO E PROCEDIMENTO',
+        'CIRURGIAS POR CIRURGIAO E TIPO',
         advancedAnalytics.surgeryByDoctor,
-        'Procedimento'
+        'Cirurgia'
       );
 
       if(advancedAnalytics.surgeryByIndication.length){
         drawDoctorTypeBreakdown(
           'INDICACOES DE CIRURGIA POR MEDICO',
           advancedAnalytics.surgeryByIndication,
-          'Procedimento indicado'
+          'Cirurgia indicada'
         );
       }
 
@@ -3322,17 +3933,18 @@ function App(){
         'DETALHAMENTO DAS CIRURGIAS',
         [
           {key:'date',label:'Data',width:16,value:r=>brDate(r.date)},
-          {key:'patient',label:'Paciente',width:35,bold:true},
-          {key:'doctor',label:'Cirurgiao',width:24},
-          {key:'indicatedBy',label:'Indicado por',width:24,value:r=>r.indicatedBy||'—'},
-          {key:'procedure',label:'Procedimento(s)',width:34},
-          {key:'eye',label:'Olho',width:14},
-          {key:'insurance',label:'Convenio',width:21,value:r=>r.insurance||'Particular'},
-          {key:'status',label:'Status',width:19},
-          {key:'payment',label:'Pagamento',width:20},
+          {key:'patient',label:'Paciente',width:31,bold:true},
+          {key:'doctor',label:'Cirurgiao',width:22},
+          {key:'indicatedBy',label:'Indicado por',width:20,value:r=>r.indicatedBy||'—'},
+          {key:'surgery_type',label:'Cirurgia',width:26,bold:true},
+          {key:'procedure',label:'Procedimentos',width:30},
+          {key:'eye',label:'Olho',width:12},
+          {key:'insurance',label:'Convenio',width:18,value:r=>r.insurance||'Particular'},
+          {key:'status',label:'Status',width:18},
+          {key:'payment',label:'Pagamento',width:18},
           {key:'time',label:'Horario',width:14,value:r=>r.time||'—'},
-          {key:'responsible',label:'Responsavel',width:19,value:r=>launchedName(r)},
-          {key:'obs',label:'Observacao',width:33}
+          {key:'responsible',label:'Responsavel',width:18,value:r=>launchedName(r)},
+          {key:'obs',label:'Observacao',width:30}
         ],
         dashboardSurgeries,
         {subtitle:'Lista completa com status, pagamento, horario e observacoes.',maxLines:3}
@@ -3360,15 +3972,11 @@ function App(){
 
       drawSimpleRanking(
         'Cirurgias por convenio',
-        countWeightedBy(
-          dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),
-          'insuranceLabel',
-          'procedure_ids'
-        ),
+        countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel'),
         8
       );
 
-      drawSimpleRanking('Cirurgias por procedimento',countManyBy(dashboardSurgeries,'procedure_names'),8);
+      drawSimpleRanking('Cirurgias por tipo',countBy(dashboardSurgeries,'surgery_type'),8);
 
       // Rodape e numeracao em todas as paginas
       const totalPages=pdf.getNumberOfPages();
@@ -3415,7 +4023,8 @@ function App(){
       <div className="nav">
         <button className={page==='exames'?'active':''} onClick={()=>setPage('exames')}>📋 <span>Exames</span></button>
         <button className={page==='cirurgias'?'active':''} onClick={()=>setPage('cirurgias')}>🏥 <span>Cirurgias</span></button>
-        <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}>🔄 <span>Acompanhamentos</span></button>
+        <button className={page==='procedimentos'?'active':''} onClick={()=>setPage('procedimentos')}>🩺 <span>Procedimentos</span></button>
+        <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}>🔄 <span>Follow-up</span></button>
         <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}>📊 <span>Resultados</span></button>
         <button className={page==='cadastros'?'active':''} onClick={()=>setPage('cadastros')}>⚙️ <span>Cadastros</span></button>
         <button className={page==='manual'?'active':''} onClick={()=>setPage('manual')}>📖 <span>Manual</span></button>
@@ -3444,7 +4053,8 @@ function App(){
             <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('')}}>Limpar</button>
+            <input className="patient-search-input" value={examSearch} onChange={e=>setExamSearch(e.target.value)} placeholder="Buscar paciente" aria-label="Buscar paciente nos exames"/>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('');setExamSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredExams}
@@ -3471,16 +4081,18 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
-        <div className="kpis"><Kpi label="Cirurgias no período" value={totalItems(filteredSurgeries,'procedure_ids')}/><Kpi label="Agendadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Agendada')}/><Kpi label="Pendentes" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Pendente')}/><Kpi label="Realizadas" value={totalItemsByStatus(filteredSurgeries,'procedure_ids','Realizada')}/></div>
+        <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
         <div className="card">
           <div className="filters">
             <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
-            <Select value={sProcedure} setValue={setSProcedure} options={procedures} first="Todos os procedimentos"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSProcedure('')}}>Limpar</button>
+            <Select value={sSurgeryType} setValue={setSSurgeryType} options={surgeryTypes} first="Todas as cirurgias"/>
+            <Select value={sProcedure} setValue={setSProcedure} options={procedureOptions} first="Todos os procedimentos vinculados"/>
+            <input className="patient-search-input" value={sSearch} onChange={e=>setSSearch(e.target.value)} placeholder="Buscar paciente" aria-label="Buscar paciente nas cirurgias"/>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSSurgeryType('');setSProcedure('');setSSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredSurgeries}
@@ -3490,17 +4102,79 @@ function App(){
               🗑 Excluir filtrados ({filteredSurgeries.length})
             </button>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Cirurgião</th><th>Indicado por</th><th>Procedimento</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Cirurgião</th><th>Indicado por</th><th>Cirurgia</th><th>Procedimentos</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredSurgeries.length?filteredSurgeries.map(r=><tr key={r.id}>
             <td>{brDate(r.date)}{r.time&&<><br/><small>{r.time}</small></>}</td><td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
-            <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td>{r.procedure}</td><td>{r.eye}</td><td>{r.insurance}</td>
+            <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td><b>{r.surgery_type}</b>{r.classification_review&&<small className="classification-review">Revisar classificação</small>}</td><td><LinkedProceduresCell names={r.procedure_names}/></td><td>{r.eye}</td><td>{r.insurance}</td>
             <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
             <td><div className="row-actions">
               <button className="btn btn-edit-soft" onClick={()=>openEditSurgery(r)}>Editar</button>
               <button className="btn btn-danger-soft" onClick={()=>delSurgery(r.id)}>Excluir</button>
             </div></td>
-          </tr>):<tr><td colSpan="11" className="empty">Nenhuma cirurgia encontrada.</td></tr>}</tbody></table></div>
+          </tr>):<tr><td colSpan="12" className="empty">Nenhuma cirurgia encontrada.</td></tr>}</tbody></table></div>
+        </div>
+      </section>}
+
+      {page==='procedimentos'&&<section>
+        <div className="topbar">
+          <div>
+            <div className="eyebrow">PROCEDIMENTOS</div>
+            <h1>Controle de procedimentos</h1>
+            <div className="subtitle">Área exclusiva para procedimentos. Itens vinculados a uma cirurgia aparecem aqui sem aumentar a quantidade de cirurgias.</div>
+          </div>
+          <div className="top-actions">
+            <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
+            <button className="btn btn-primary" onClick={()=>{
+              setEditingProcedureId(null);
+              setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+              setProcedureModal(true);
+            }}>+ Novo procedimento</button>
+          </div>
+        </div>
+
+        <div className="kpis">
+          <Kpi label="Procedimentos no período" value={filteredProcedures.length}/>
+          <Kpi label="Agendados" value={countRowsByStatus(filteredProcedures,'Agendada')}/>
+          <Kpi label="Pendentes" value={countRowsByStatus(filteredProcedures,'Pendente')}/>
+          <Kpi label="Realizados" value={countRowsByStatus(filteredProcedures,'Realizada')}/>
+          <Kpi label="Vinculados a cirurgias" value={filteredProcedures.filter(r=>r.surgery_group_id).length}/>
+        </div>
+
+        <div className="card">
+          <div className="filters">
+            <input type="month" value={pMonth} onChange={e=>setPMonth(e.target.value)}/>
+            <Select value={pDoctor} setValue={setPDoctor} options={doctors} first="Todos os médicos"/>
+            <Select value={pProcedure} setValue={setPProcedure} options={procedureOptions} first="Todos os procedimentos"/>
+            <Select value={pStatus} setValue={setPStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
+            <input className="patient-search-input" value={pSearch} onChange={e=>setPSearch(e.target.value)} placeholder="Buscar paciente" aria-label="Buscar paciente nos procedimentos"/>
+            <button className="btn btn-light" onClick={()=>{setPMonth('');setPDoctor('');setPProcedure('');setPStatus('');setPSearch('')}}>Limpar</button>
+            <button className="btn btn-danger-soft bulk-delete-btn" onClick={deleteFilteredProcedures} disabled={!filteredProcedures.length}>
+              🗑 Excluir filtrados ({filteredProcedures.length})
+            </button>
+          </div>
+
+          <div className="table-wrap"><table><thead><tr>
+            <th>Data</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Procedimento</th><th>Origem</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Observação</th><th>Lançado por</th><th>Ações</th>
+          </tr></thead>
+          <tbody>{filteredProcedureLaunches.length?filteredProcedureLaunches.map(r=><tr key={r.group_key||r.id}>
+            <td>{brDate(r.date)}{r.time&&<><br/><small>{r.time}</small></>}</td>
+            <td><PatientCell name={r.patient} phone={r.whatsapp}/></td>
+            <td>{r.doctor}</td>
+            <td>{r.indicatedBy||<span className="muted">—</span>}</td>
+            <td><ProcedureListCell names={r.procedure_names}/></td>
+            <td>{r.surgery_group_id?<span className="procedure-origin linked">Pacote: {r.linked_surgery||'Cirurgia'}</span>:<span className="procedure-origin standalone">Avulso</span>}</td>
+            <td>{r.eye}</td>
+            <td>{r.insurance||'Particular'}</td>
+            <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
+            <td><ObservationCell text={r.obs}/></td>
+            <td>{launchedName(r)}</td>
+            <td><div className="row-actions">
+              <button className="btn btn-edit-soft" onClick={()=>openEditProcedure(r)}>Editar</button>
+              {r.linked_surgery_group&&<button className="btn btn-light" onClick={()=>{openEditSurgery(r.linked_surgery_group);setPage('cirurgias')}}>Abrir cirurgia</button>}
+              <button className="btn btn-danger-soft" onClick={()=>delProcedure(r)}>Excluir</button>
+            </div></td>
+          </tr>):<tr><td colSpan="12" className="empty">Nenhum procedimento encontrado.</td></tr>}</tbody></table></div>
         </div>
       </section>}
 
@@ -3610,7 +4284,7 @@ function App(){
             <div>
               <div className="eyebrow">INTELIGÊNCIA OPERACIONAL</div>
               <h1>Resultados e análise mensal</h1>
-              <div className="subtitle">Visão consolidada da produção de exames, cirurgias, pacientes e responsáveis pelos lançamentos.</div>
+              <div className="subtitle">Visão consolidada e separada de exames, cirurgias, procedimentos, pacientes e responsáveis pelos lançamentos.</div>
             </div>
             <div className="top-actions no-pdf">
               <button className="btn btn-light" onClick={exportExcel}>⬇ Excel</button>
@@ -3630,15 +4304,16 @@ function App(){
               <Select value={dashDoctor} setValue={setDashDoctor} options={doctors} first="Todos os médicos"/>
               <Select value={dashUser} setValue={setDashUser} options={['Juliana','Luiza','Elisangela','ADM']} first="Todos os responsáveis"/>
               <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
+              <input className="patient-search-input" value={dashPatient} onChange={e=>setDashPatient(e.target.value)} placeholder="Buscar paciente" aria-label="Buscar paciente nos resultados"/>
             </div>
             <div className="active-period">Período analisado: <b>{monthLabel(dashMonth)}</b></div>
           </div>
 
           <div className="analysis-grid results-kpis">
-            <div className="analysis-card highlight"><span>Pacientes únicos</span><strong>{resultSummary.uniquePatients}</strong><small>pacientes no período</small></div>
+            <div className="analysis-card highlight"><span>Pacientes únicos</span><strong>{resultSummary.uniquePatients}</strong><small>considerando os três módulos</small></div>
             <div className="analysis-card"><span>Total de exames</span><strong>{resultSummary.totalEx}</strong><small>{resultSummary.realEx} realizados • {resultSummary.exRate}% de realização</small></div>
             <div className="analysis-card"><span>Total de cirurgias</span><strong>{resultSummary.totalSu}</strong><small>{resultSummary.realSu} realizadas • {resultSummary.suRate}% de realização</small></div>
-            <div className="analysis-card"><span>Total de lançamentos</span><strong>{resultSummary.totalEx+resultSummary.totalSu}</strong><small>exames + cirurgias</small></div>
+            <div className="analysis-card procedure-kpi"><span>Total de procedimentos</span><strong>{resultSummary.totalProcedures}</strong><small>{resultSummary.realProcedures} realizados • {resultSummary.procedureRate}% de realização</small></div>
           </div>
 
           <div className="results-status-overview">
@@ -3679,18 +4354,40 @@ function App(){
               </div>
               <div className="status-summary-foot"><b>{resultSummary.suOpen}</b> cirurgia(s) ainda em fluxo • {resultSummary.suOpenRate}% do total</div>
             </div>
+
+            <div className="card status-summary-card procedure-status-card">
+              <div className="status-summary-head">
+                <div>
+                  <span>PROCEDIMENTOS</span>
+                  <h3>Situação dos procedimentos</h3>
+                  <p>Procedimentos são analisados separadamente e não aumentam a quantidade de cirurgias.</p>
+                </div>
+                <div className="status-rate success"><b>{resultSummary.procedureRate}%</b><small>realização</small></div>
+              </div>
+              <div className="status-breakdown-grid surgery">
+                <div className="status-breakdown-item success"><span>Realizados</span><b>{resultSummary.realProcedures}</b><small>concluídos</small></div>
+                <div className="status-breakdown-item info"><span>Agendados</span><b>{resultSummary.prAgendada}</b><small>com data</small></div>
+                <div className="status-breakdown-item info"><span>Autorizados</span><b>{resultSummary.prAutorizada}</b><small>liberados</small></div>
+                <div className="status-breakdown-item warning"><span>Pendentes</span><b>{resultSummary.prPendente}</b><small>precisam atenção</small></div>
+                <div className="status-breakdown-item neutral"><span>Solicitações</span><b>{resultSummary.prSolicitacao}</b><small>em análise</small></div>
+                <div className="status-breakdown-item danger"><span>Cancelados</span><b>{resultSummary.prCancelada}</b><small>fora do fluxo</small></div>
+              </div>
+              <div className="status-summary-foot"><b>{resultSummary.prOpen}</b> procedimento(s) ainda em fluxo • {resultSummary.procedureOpenRate}% do total</div>
+            </div>
           </div>
 
           <div className="results-operational-strip">
-            <div><span>Financeiro em aberto</span><b>{resultSummary.paymentPending}</b><small>pendente, 20% pago ou não informado</small></div>
-            <div><span>Financeiro fechado</span><b>{resultSummary.paymentClosed}</b><small>pago ou convênio</small></div>
-            <div><span>Exame de maior volume</span><b className="text-value">{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamento(s)</small></div>
-            <div><span>Cirurgia de maior volume</span><b className="text-value">{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamento(s)</small></div>
+            <div><span>Total operacional</span><b>{resultSummary.totalEx+resultSummary.totalSu+resultSummary.totalProcedures}</b><small>exames + cirurgias + procedimentos, sem misturar as categorias</small></div>
+            <div><span>Financeiro em aberto</span><b>{resultSummary.paymentPending}</b><small>cirurgias: pendente, 20% pago ou não informado</small></div>
+            <div><span>Exame de maior volume</span><b className="text-value">{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} exame(s)</small></div>
+            <div><span>Cirurgia de maior volume</span><b className="text-value">{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} cirurgia(s)</small></div>
+            <div><span>Procedimento de maior volume</span><b className="text-value">{resultSummary.procedureTop?.[0]||'Sem dados'}</b><small>{resultSummary.procedureTop?.[1]||0} procedimento(s)</small></div>
           </div>
 
           <div className="results-highlights">
-            <div className="card insight-card"><span>Exame com maior volume</span><b>{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} lançamentos</small></div>
-            <div className="card insight-card"><span>Cirurgia com maior volume</span><b>{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} lançamentos</small></div>
+            <div className="card insight-card"><span>Exame com maior volume</span><b>{resultSummary.examTop?.[0]||'Sem dados'}</b><small>{resultSummary.examTop?.[1]||0} exame(s)</small></div>
+            <div className="card insight-card"><span>Cirurgia com maior volume</span><b>{resultSummary.surgTop?.[0]||'Sem dados'}</b><small>{resultSummary.surgTop?.[1]||0} cirurgia(s)</small></div>
+            <div className="card insight-card"><span>Procedimento com maior volume</span><b>{resultSummary.procedureTop?.[0]||'Sem dados'}</b><small>{resultSummary.procedureTop?.[1]||0} procedimento(s)</small></div>
             <div className="card insight-card"><span>Profissional com maior volume</span><b>{resultSummary.doctorTop?.[0]||'Sem dados'}</b><small>{resultSummary.doctorTop?.[1]||0} registros</small></div>
           </div>
 
@@ -3756,7 +4453,7 @@ function App(){
             <div className="results-section-title">
               <div>
                 <h3>Produção por médico</h3>
-                <p>Veja exatamente quais exames e procedimentos estão associados a cada médico.</p>
+                <p>Veja exatamente quais exames e cirurgias estão associados a cada médico.</p>
               </div>
               <div className="pill">Médico × tipo</div>
             </div>
@@ -3770,10 +4467,17 @@ function App(){
               />
 
               <DoctorTypeMatrix
-                title="Cirurgias por cirurgião e procedimento"
-                subtitle="Exemplo de leitura: Dr. Daniel — 5 Cataratas, 7 Pterígios e demais procedimentos do período."
+                title="Cirurgias por cirurgião e tipo"
+                subtitle="Cada caso cirúrgico conta uma vez, independentemente dos procedimentos associados."
                 rows={advancedAnalytics.surgeryByDoctor}
                 itemLabel="Cirurgia"
+              />
+
+              <DoctorTypeMatrix
+                title="Procedimentos por médico e tipo"
+                subtitle="Procedimentos avulsos e procedimentos de pacote são contados aqui, separados das cirurgias."
+                rows={advancedAnalytics.procedureByDoctor}
+                itemLabel="Procedimento"
               />
             </div>
           </div>
@@ -3797,7 +4501,7 @@ function App(){
 
               <DoctorTypeMatrix
                 title="Indicações de cirurgias"
-                subtitle="Quantidade e procedimento cirúrgico indicado por cada médico."
+                subtitle="Quantidade e tipo de cirurgia indicada por cada médico."
                 rows={advancedAnalytics.surgeryByIndication}
                 itemLabel="Cirurgia indicada"
               />
@@ -3814,11 +4518,20 @@ function App(){
           />
 
           <StatusTypeMatrix
-            title="Cirurgias por status e procedimento"
-            subtitle="Mostra quantos procedimentos de cada tipo estão em solicitação, pendentes, autorizados, agendados, realizados ou cancelados."
+            title="Cirurgias por status e por tipo"
+            subtitle="Mostra quantas cirurgias de cada tipo estão em solicitação, pendentes, autorizadas, agendadas, realizadas ou canceladas. Cada caso conta uma única vez."
             statuses={['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada']}
             data={advancedAnalytics.surgeryByStatusType}
             totalByStatus={advancedAnalytics.surgeryStatusTotals}
+            labelName="Cirurgia"
+          />
+
+          <StatusTypeMatrix
+            title="Procedimentos por status e por tipo"
+            subtitle="Mostra Botox, Laser CO₂, Bioestimulador, anti-VEGF e demais procedimentos em uma análise própria, sem somá-los às cirurgias."
+            statuses={['Pendente','Solicitação','Autorizada','Agendada','Realizada','Cancelada']}
+            data={advancedAnalytics.procedureByStatusType}
+            totalByStatus={advancedAnalytics.procedureStatusTotals}
             labelName="Procedimento"
           />
 
@@ -3838,10 +4551,18 @@ function App(){
           </div>
 
           <div className="results-section">
-            <div className="results-section-title"><div><h3>Análise de cirurgias</h3><p>Produção, procedimentos, status e convênios.</p></div><div className="pill">{resultSummary.totalSu} cirurgias</div></div>
+            <div className="results-section-title"><div><h3>Análise de cirurgias</h3><p>Produção, tipos de cirurgia, status e convênios.</p></div><div className="pill">{resultSummary.totalSu} cirurgias</div></div>
             <div className="grid">
-              <div className="card chart-card"><h2>Cirurgias por procedimento</h2><Bars data={countManyBy(dashboardSurgeries,'procedure_names')}/></div>
+              <div className="card chart-card"><h2>Cirurgias por tipo</h2><Bars data={countBy(dashboardSurgeries,'surgery_type')}/></div>
               <div className="card chart-card"><h2>Cirurgias por cirurgião</h2><Bars data={countBy(dashboardSurgeries,'doctor')}/></div>
+            </div>
+          </div>
+
+          <div className="results-section procedure-results-section">
+            <div className="results-section-title"><div><h3>Análise de procedimentos</h3><p>Procedimentos são analisados em uma seção própria e permanecem vinculados ao pacote quando houver cirurgia.</p></div><div className="pill">{resultSummary.totalProcedures} procedimentos</div></div>
+            <div className="grid">
+              <div className="card chart-card"><h2>Procedimentos por tipo</h2><Bars data={countBy(dashboardProcedures,'procedure')}/></div>
+              <div className="card chart-card"><h2>Procedimentos por médico</h2><Bars data={countBy(dashboardProcedures,'doctor')}/></div>
             </div>
           </div>
         </div>
@@ -3852,16 +4573,21 @@ function App(){
             <div className="card chart-card"><h2>Cirurgias por convênio</h2><Bars data={countBy(dashboardSurgeries.map(x=>({...x,insuranceLabel:x.insurance||'Particular'})),'insuranceLabel')}/></div>
           </div>
 
+          <div className="grid pdf-continuation-grid procedure-results-grid">
+            <div className="card chart-card"><h2>Status dos procedimentos</h2><Bars data={countBy(dashboardProcedures,'status')}/></div>
+            <div className="card chart-card"><h2>Origem dos procedimentos</h2><Bars data={countBy(dashboardProcedures.map(x=>({...x,originLabel:x.surgery_group_id?'Vinculado a cirurgia':'Avulso'})),'originLabel')}/></div>
+          </div>
+
           <div className="card results-users-card">
             <div className="section-title">
-              <div><h2>Lançamentos por responsável</h2><p className="section-description">Acompanhe quantos registros foram realizados por cada usuário.</p></div>
-              <div className="pill">{resultSummary.totalEx+resultSummary.totalSu} registros</div>
+              <div><h2>Lançamentos por responsável</h2><p className="section-description">Acompanhe separadamente exames, cirurgias e procedimentos registrados por cada usuário.</p></div>
+              <div className="pill">{resultSummary.totalEx+resultSummary.totalSu+resultSummary.totalProcedures} registros</div>
             </div>
-            <div className="table-wrap"><table><thead><tr><th>Responsável</th><th>Exames</th><th>Cirurgias</th><th>Total</th><th>Participação</th></tr></thead>
+            <div className="table-wrap"><table><thead><tr><th>Responsável</th><th>Exames</th><th>Cirurgias</th><th>Procedimentos</th><th>Total</th><th>Participação</th></tr></thead>
             <tbody>{userRows.map(r=>{
-              const total=r.exams+r.surgeries;
-              const all=resultSummary.totalEx+resultSummary.totalSu;
-              return <tr key={r.key}><td><b>{r.name}</b></td><td>{r.exams}</td><td>{r.surgeries}</td><td><b>{total}</b></td><td>{all?Math.round(total/all*100):0}%</td></tr>
+              const total=r.exams+r.surgeries+r.procedures;
+              const all=resultSummary.totalEx+resultSummary.totalSu+resultSummary.totalProcedures;
+              return <tr key={r.key}><td><b>{r.name}</b></td><td>{r.exams}</td><td>{r.surgeries}</td><td>{r.procedures}</td><td><b>{total}</b></td><td>{all?Math.round(total/all*100):0}%</td></tr>
             })}</tbody></table></div>
           </div>
         </div>
@@ -3872,14 +4598,14 @@ function App(){
           <div>
             <div className="eyebrow">CONFIGURAÇÕES DO SISTEMA</div>
             <h1>Cadastros da clínica</h1>
-            <div className="subtitle">ADM e Orientadora podem adicionar ou remover médicos, exames e cirurgias/procedimentos. As alterações ficam disponíveis automaticamente nos próximos lançamentos.</div>
+            <div className="subtitle">ADM e Orientadora podem cadastrar médicos, exames, cirurgias e procedimentos em catálogos separados. Procedimento nunca é contabilizado como cirurgia.</div>
           </div>
         </div>
 
         <div className="catalog-info card">
           <div>
             <b>Cadastros dinâmicos</b>
-            <p>Quando surgir um novo médico, exame ou cirurgia na clínica, você pode cadastrar aqui sem precisar alterar o código do sistema.</p>
+            <p>Cirurgias e procedimentos ficam em cadastros independentes: cirurgia é o evento cirúrgico; procedimento é um item avulso ou vinculado ao pacote de uma cirurgia.</p>
           </div>
           <span>ADM e Orientadora</span>
         </div>
@@ -3902,11 +4628,19 @@ function App(){
             onRemove={id=>deactivateCatalog('exam_types',id)}
           />
           <Catalog
-            title="Cirurgias / procedimentos"
-            description="Cadastre novas cirurgias e procedimentos para disponibilizá-los no lançamento cirúrgico."
-            placeholder="Ex.: Cirurgia de Catarata"
-            items={procedures}
-            onAdd={v=>addCatalog('procedures',v,{category:'Cirurgia'})}
+            title="Cirurgias"
+            description="Cadastre somente cirurgias. Este catálogo é separado dos procedimentos e cada lançamento conta como 1 cirurgia."
+            placeholder="Ex.: Blefaroplastia"
+            items={surgeryTypes}
+            onAdd={v=>addCatalog('surgery_types',v)}
+            onRemove={id=>deactivateCatalog('surgery_types',id)}
+          />
+          <Catalog
+            title="Procedimentos"
+            description="Cadastre somente procedimentos, como Botox, Laser CO₂, Bioestimulador e Profhilo. Eles nunca entram como cirurgia."
+            placeholder="Ex.: Botox"
+            items={procedureOptions}
+            onAdd={v=>addCatalog('procedures',v)}
             onRemove={id=>deactivateCatalog('procedures',id)}
           />
         </div>
@@ -3930,10 +4664,10 @@ function App(){
           <div>
             <span className="manual-badge">COMECE AQUI</span>
             <h2>Como funciona o sistema?</h2>
-            <p>O sistema centraliza os lançamentos de exames e cirurgias da clínica. As informações ficam salvas no Supabase e podem ser acompanhadas nos Resultados e exportadas para Excel.</p>
+            <p>O sistema centraliza os lançamentos de exames, cirurgias e procedimentos da clínica. As informações ficam salvas no Supabase e podem ser acompanhadas nos Resultados e exportadas para Excel.</p>
           </div>
           <div className="manual-flow">
-            <span>1. Entrar</span><b>→</b><span>2. Selecionar responsável</span><b>→</b><span>3. Lançar</span><b>→</b><span>4. Acompanhar resultados</span>
+            <span>1. Entrar</span><b>→</b><span>2. Selecionar responsável</span><b>→</b><span>3. Lançar</span><b>→</b><span>4. Acompanhar</span>
           </div>
         </div>
 
@@ -3962,7 +4696,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">04</div>
             <h3>Lançar uma cirurgia</h3>
-            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe paciente, cirurgião e selecione um ou vários procedimentos no mesmo lançamento. Depois complete olho, convênio, status, horários, pagamento e observações.</p>
+            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe paciente, cirurgião e selecione a cirurgia. Depois, se fizer parte do pacote, vincule um ou vários procedimentos adicionais. A cirurgia contará uma única vez, independentemente da quantidade de procedimentos. Complete olho, convênio, status, horários, pagamento e observações.</p>
             <div className="manual-note">Mantenha o status atualizado para que os indicadores mensais representem a situação real da cirurgia.</div>
           </article>
 
@@ -4002,7 +4736,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">10</div>
             <h3>Cadastros da clínica</h3>
-            <p>Tanto no acesso <b>ADM</b> quanto no acesso <b>Orientadora</b>, abra <b>Cadastros</b> no menu lateral. Nessa página é possível adicionar ou remover <b>médicos, exames e cirurgias/procedimentos</b>. Os novos itens passam a aparecer automaticamente nos formulários de lançamento.</p><div className="manual-note">Itens removidos deixam de aparecer para novos lançamentos, mas os registros antigos permanecem preservados.</div>
+            <p>Tanto no acesso <b>ADM</b> quanto no acesso <b>Orientadora</b>, abra <b>Cadastros</b> no menu lateral. Nessa página é possível adicionar ou remover <b>médicos, exames, cirurgias e procedimentos</b>. Os novos itens passam a aparecer automaticamente nos formulários de lançamento.</p><div className="manual-note">Itens removidos deixam de aparecer para novos lançamentos, mas os registros antigos permanecem preservados.</div>
           </article>
 
           <article className="card manual-card">
@@ -4760,7 +5494,7 @@ function App(){
 
       .results-operational-strip{
         display:grid;
-        grid-template-columns:repeat(4,minmax(0,1fr));
+        grid-template-columns:repeat(5,minmax(0,1fr));
         gap:10px;
         margin:0 0 18px;
       }
@@ -4868,6 +5602,20 @@ function App(){
           width:100%;
         }
       }
+    `}</style>
+
+    <style>{`
+      .patient-search-input{min-width:190px}
+      .linked-procedures-cell{min-width:180px}
+      .linked-procedures-cell>small{display:block;margin-bottom:6px;color:#74838c;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+      .linked-procedures-cell>div{display:flex;flex-wrap:wrap;gap:5px}
+      .linked-procedure-chip{display:inline-flex;align-items:center;max-width:230px;padding:5px 8px;border:1px solid #d8e7eb;border-radius:999px;background:#f1f7f9;color:#315f72;font-size:9px;font-weight:750;line-height:1.2}
+      .procedure-kpi{border-color:#dce9df!important;background:linear-gradient(180deg,#fff,#f5faf7)!important}
+      .procedure-status-card{grid-column:1/-1}
+      .results-highlights{grid-template-columns:repeat(4,minmax(0,1fr))!important}
+      .results-operational-strip{grid-template-columns:repeat(5,minmax(0,1fr))}
+      @media(max-width:1180px){.results-highlights{grid-template-columns:repeat(2,minmax(0,1fr))!important}.results-operational-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.patient-search-input{min-width:150px}}
+      @media(max-width:700px){.results-highlights,.results-operational-strip{grid-template-columns:1fr!important}.patient-search-input{width:100%;min-width:0}.linked-procedures-cell{min-width:150px}}
     `}</style>
 
     <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle="Selecione quem está fazendo este lançamento."  onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
@@ -4978,15 +5726,16 @@ function App(){
         <Field label="WhatsApp / contato (opcional)"><input type="tel" inputMode="tel" autoComplete="tel" value={sForm.whatsapp} onChange={e=>setSForm({...sForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
         <Field label="Cirurgião"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
         <Field label="Indicado por (opcional)"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
-        <Field label={editingSurgeryId ? "Procedimento" : "Procedimentos"} full>
+        <Field label="Cirurgia"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v})} options={surgeryTypes} first="Selecione a cirurgia"/></Field>
+        <Field label="Procedimentos adicionais (opcional)" full>
           <div className="procedure-multi-select">
             <div className="procedure-multi-head">
-              <span>Selecione um ou vários procedimentos para este lançamento</span>
+              <span>Selecione zero, um ou vários procedimentos que fazem parte deste pacote cirúrgico</span>
               <b>{sForm.procedure_ids?.length||0} selecionado(s)</b>
             </div>
 
             <div className="procedure-options">
-              {procedures.map(procedure=>{
+              {procedureOptions.map(procedure=>{
                 const checked=sForm.procedure_ids?.includes(procedure.id);
 
                 return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}>
@@ -5024,6 +5773,50 @@ function App(){
         <Field label="Horário da cirurgia"><input type="time" value={sForm.time} onChange={e=>setSForm({...sForm,time:e.target.value})}/></Field>
         <Field label="Pagamento"><Select value={sForm.payment} setValue={v=>setSForm({...sForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
         <Field label="Observações" full><textarea value={sForm.obs} onChange={e=>setSForm({...sForm,obs:e.target.value})} rows="5"/></Field>
+      </div>
+    </Modal>
+
+    <style>{`
+      .classification-review{display:block;margin-top:4px;color:#9a6b22;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+      .procedure-origin{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;font-size:9px;font-weight:800;white-space:nowrap}
+      .procedure-origin.linked{background:#edf6f0;color:#417257;border:1px solid #d5e8db}
+      .procedure-origin.standalone{background:#f2f5f6;color:#61727a;border:1px solid #e2e8ea}
+    `}</style>
+
+    <Modal open={procedureModal} onClose={closeProcedureModal} title={editingProcedureId?'Editar procedimento':'Novo procedimento'} subtitle="Procedimentos são contabilizados separadamente das cirurgias." onSave={editingProcedureId?updateProcedure:addProcedure} saveText={editingProcedureId?'Salvar alterações':'Salvar procedimento'}>
+      <div className="form-grid">
+        <Field label="Data"><input type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
+        <Field label="Paciente"><input value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field>
+        <Field label="WhatsApp / contato (opcional)"><input type="tel" inputMode="tel" autoComplete="tel" value={pForm.whatsapp} onChange={e=>setPForm({...pForm,whatsapp:e.target.value})} placeholder="(18) 99999-9999"/></Field>
+        <Field label="Médico"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+        <Field label="Indicado por (opcional)"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
+        <Field label="Procedimentos" full>
+          <div className="procedure-multi-select">
+            <div className="procedure-multi-head">
+              <span>Você pode manter um ou vários procedimentos no mesmo lançamento</span>
+              <b>{pForm.procedure_ids?.length||0} selecionado(s)</b>
+            </div>
+            <div className="procedure-options">
+              {procedureOptions.map(procedure=>{
+                const checked=pForm.procedure_ids?.includes(procedure.id);
+                return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}>
+                  <input type="checkbox" checked={checked} onChange={()=>{
+                    const ids=pForm.procedure_ids||[];
+                    setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id]});
+                  }}/>
+                  <span>{procedure.name}</span>
+                </label>;
+              })}
+            </div>
+          </div>
+        </Field>
+        <Field label="Olho"><Select value={pForm.eye} setValue={v=>setPForm({...pForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
+        <Field label="Convênio"><Select value={pForm.insurance_id} setValue={v=>setPForm({...pForm,insurance_id:v})} options={insurances} first="Particular / selecione"/></Field>
+        <Field label="Status"><Select value={pForm.status} setValue={v=>setPForm({...pForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
+        <Field label="Lançado por"><Select value={pForm.launcher||currentLaunchName||''} setValue={v=>setPForm({...pForm,launcher:v})} options={launcherOptionsAll} first="Selecione quem lançou"/></Field>
+        <Field label="Horário"><input type="time" value={pForm.time} onChange={e=>setPForm({...pForm,time:e.target.value})}/></Field>
+        <Field label="Pagamento"><Select value={pForm.payment} setValue={v=>setPForm({...pForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
+        <Field label="Observações" full><textarea value={pForm.obs} onChange={e=>setPForm({...pForm,obs:e.target.value})} rows="5"/></Field>
       </div>
     </Modal>
 
@@ -5091,6 +5884,12 @@ function App(){
       @media(max-width:620px){.followup-metrics-head{flex-direction:column}.followup-rate-box{width:100%;flex-basis:auto}.followup-metrics-grid,.followup-kpis,.followup-filters,.followup-info-grid{grid-template-columns:1fr}.followup-modal-contact{align-items:stretch;flex-direction:column}.followup-modal-contact .btn{width:100%}.followup-card{padding:14px}.followup-card-head{align-items:stretch;flex-direction:column}.followup-contact-box{text-align:left;width:100%;min-width:0}.followup-filter-actions{align-items:stretch;flex-direction:column}.followup-actions .btn,.followup-actions a.btn{flex:1 1 100%}}
     `}</style>
 
+    <style>{`
+      .procedure-launch-cell{min-width:180px}
+      .procedure-launch-cell>small{display:block;margin-bottom:6px;color:#74838c;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:.035em}
+      .procedure-launch-cell>div{display:flex;flex-wrap:wrap;gap:5px}
+    `}</style>
+
     <Modal open={followupModal} onClose={()=>{setFollowupModal(false);setFollowupTarget(null)}} title={followupTarget?.followup?'Atualizar follow-up':'Registrar follow-up'} subtitle={followupTarget ? `${followupTarget.patient} • ${followupTarget.source_type==='exam'?'Exame':'Cirurgia'} • ${brDate(followupTarget.source_date)}` : ''} onSave={saveFollowup} saveText="Salvar follow-up">
       {followupTarget&&<div className="followup-modal-contact">
         <div>
@@ -5110,22 +5909,29 @@ function App(){
       </div>
     </Modal>
 
+    <style>{`
+      .catalog-item-actions{display:flex;align-items:center;gap:6px}
+      .catalog-move-btn{width:auto!important;min-width:30px;padding:0 8px!important;border-radius:8px!important;color:#315f72!important;background:#eef5f7!important;border:1px solid #d9e7eb!important;font-size:14px!important}
+      .catalog-move-btn:hover{background:#e2eff3!important}
+    `}</style>
+
     <Modal open={catalogModal} onClose={()=>setCatalogModal(false)} title="Cadastros da clínica" subtitle="Disponível para ADM e Orientadora." onSave={()=>setCatalogModal(false)} saveText="Concluir">
       <Catalog title="Médicos / profissionais" items={doctors} onAdd={v=>addCatalog('doctors',v)} onRemove={id=>deactivateCatalog('doctors',id)} />
       <Catalog title="Exames" items={examTypes} onAdd={v=>addCatalog('exam_types',v)} onRemove={id=>deactivateCatalog('exam_types',id)} />
-      <Catalog title="Cirurgias / procedimentos" items={procedures} onAdd={v=>addCatalog('procedures',v,{category:'Cirurgia'})} onRemove={id=>deactivateCatalog('procedures',id)} />
+      <Catalog title="Cirurgias" items={surgeryTypes} onAdd={v=>addCatalog('surgery_types',v)} onRemove={id=>deactivateCatalog('surgery_types',id)} />
+      <Catalog title="Procedimentos" items={procedureOptions} onAdd={v=>addCatalog('procedures',v)} onRemove={id=>deactivateCatalog('procedures',id)} />
     </Modal>
   </div>;
 }
 
-function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onRemove}){
+function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onRemove,onMove,moveLabel}){
   const [value,setValue]=useState('');
 
   const submit = async ()=>{
     const clean=value.trim();
     if(!clean) return;
-    await onAdd(clean);
-    setValue('');
+    const saved=await onAdd(clean);
+    if(saved!==false) setValue('');
   };
 
   return <div className="catalog-card catalog-card-large">
@@ -5151,7 +5957,10 @@ function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onR
       {items.length ? items.map(x=>
         <div className="catalog-item" key={x.id}>
           <span>{x.name}</span>
-          <button title={`Remover ${x.name}`} onClick={()=>onRemove(x.id)}>×</button>
+          <div className="catalog-item-actions">
+            {onMove&&<button className="catalog-move-btn" title={moveLabel||'Mover item'} onClick={()=>onMove(x.id)}>↔</button>}
+            <button title={`Remover ${x.name}`} onClick={()=>onRemove(x.id)}>×</button>
+          </div>
         </div>
       ) : <div className="catalog-empty">Nenhum cadastro ativo.</div>}
     </div>
