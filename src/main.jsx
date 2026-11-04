@@ -69,6 +69,181 @@ const countWeightedBy = (arr, key, itemsKey) => arr.reduce((o, item) => {
 
 const percentOf = (value,total) => total ? Math.round((value/total)*100) : 0;
 
+const numericValue = value => {
+  const n=Number(value||0);
+  return Number.isFinite(n)?n:0;
+};
+const moneyBR = value => numericValue(value).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const financeOrigin = record => record?.payment_origin || (record?.insurance_id || record?.insurance ? 'Convênio' : 'Particular');
+const isCanceledOperational = status => String(status||'').toLowerCase().includes('cancel');
+const isRealizedOperational = status => String(status||'').toLowerCase().includes('realiz');
+const isPotentialOperational = status => !isCanceledOperational(status) && !isRealizedOperational(status);
+
+
+// V23 - Tabela de valores padrão. O preço é apenas uma sugestão inicial:
+// depois de aplicado ao lançamento, o campo Valor total continua totalmente editável.
+const STANDARD_PRICE_PRESETS = [
+  // EXAMES / CONSULTAS
+  {key:'exam-consulta-particular',kind:'exam',match:['consulta'],label:'Consulta - Particular',amount:400,origin:'Particular'},
+  {key:'exam-consulta-convenio',kind:'exam',match:['consulta'],label:'Consulta - Convênio',amount:220,origin:'Convênio'},
+  {key:'exam-paquimetria-particular',kind:'exam',match:['paquimetria'],label:'Paquimetria - Particular',amount:250,origin:'Particular'},
+  {key:'exam-paquimetria-convenio',kind:'exam',match:['paquimetria'],label:'Paquimetria - Convênio',amount:200,origin:'Convênio'},
+  {key:'exam-paquimetria-sus',kind:'exam',match:['paquimetria'],label:'Paquimetria - SUS',amount:180,origin:'SUS'},
+  {key:'exam-mapeamento-particular',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - Particular',amount:250,origin:'Particular'},
+  {key:'exam-mapeamento-convenio',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - Convênio',amount:200,origin:'Convênio'},
+  {key:'exam-mapeamento-sus',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - SUS',amount:180,origin:'SUS'},
+  {key:'exam-retinografia-particular',kind:'exam',match:['retinografia'],label:'Retinografia - Particular',amount:280,origin:'Particular'},
+  {key:'exam-retinografia-convenio',kind:'exam',match:['retinografia'],label:'Retinografia - Convênio',amount:220,origin:'Convênio'},
+  {key:'exam-retinografia-sus',kind:'exam',match:['retinografia'],label:'Retinografia - SUS',amount:180,origin:'SUS'},
+  {key:'exam-campimetria-particular',kind:'exam',match:['campimetria'],label:'Campimetria - Particular',amount:380,origin:'Particular'},
+  {key:'exam-campimetria-convenio',kind:'exam',match:['campimetria'],label:'Campimetria - Convênio',amount:320,origin:'Convênio'},
+  {key:'exam-campimetria-sus',kind:'exam',match:['campimetria'],label:'Campimetria - SUS',amount:180,origin:'SUS'},
+  {key:'exam-topografia-particular',kind:'exam',match:['topografia'],label:'Topografia - Particular',amount:280,origin:'Particular'},
+  {key:'exam-topografia-convenio',kind:'exam',match:['topografia'],label:'Topografia - Convênio',amount:240,origin:'Convênio'},
+  {key:'exam-topografia-sus',kind:'exam',match:['topografia'],label:'Topografia - SUS',amount:180,origin:'SUS'},
+  {key:'exam-microscopia-particular',kind:'exam',match:['microscopia'],label:'Microscopia - Particular',amount:320,origin:'Particular'},
+  {key:'exam-microscopia-convenio',kind:'exam',match:['microscopia'],label:'Microscopia - Convênio',amount:280,origin:'Convênio'},
+  {key:'exam-microscopia-sus',kind:'exam',match:['microscopia'],label:'Microscopia - SUS',amount:180,origin:'SUS'},
+  {key:'exam-biometria-particular',kind:'exam',match:['biometria'],label:'Biometria - Particular',amount:250,origin:'Particular'},
+  {key:'exam-biometria-convenio',kind:'exam',match:['biometria'],label:'Biometria - Convênio',amount:200,origin:'Convênio'},
+  {key:'exam-oct-particular',kind:'exam',match:['oct'],label:'OCT - Particular',amount:750,origin:'Particular'},
+  {key:'exam-oct-convenio',kind:'exam',match:['oct'],label:'OCT - Convênio',amount:650,origin:'Convênio'},
+  {key:'exam-oct-sus',kind:'exam',match:['oct'],label:'OCT - SUS (AO)',amount:480,origin:'SUS'},
+  {key:'exam-ortoptico-convenio',kind:'exam',match:['ortopt'],label:'Teste Ortóptico - Convênio',amount:250,origin:'Convênio'},
+  {key:'exam-ishihara-convenio',kind:'exam',match:['ishihara'],label:'Teste de Ishihara - Convênio',amount:180,origin:'Convênio'},
+  {key:'exam-titmus-convenio',kind:'exam',match:['titmus'],label:'Teste de Titmus - Convênio',amount:180,origin:'Convênio'},
+  {key:'exam-curva-particular',kind:'exam',match:['curva tensional'],label:'Curva Tensional - Particular',amount:200,origin:'Particular'},
+  {key:'exam-curva-convenio',kind:'exam',match:['curva tensional'],label:'Curva Tensional - Convênio',amount:180,origin:'Convênio'},
+  {key:'exam-lentes-particular',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - Particular',amount:100,origin:'Particular'},
+  {key:'exam-lentes-convenio',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - Convênio',amount:100,origin:'Convênio'},
+  {key:'exam-lentes-sus',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - SUS',amount:100,origin:'SUS'},
+  {key:'exam-schirmer-particular',kind:'exam',match:['schirmer'],label:'Teste de Schirmer - Particular',amount:200,origin:'Particular'},
+  {key:'exam-schirmer-convenio',kind:'exam',match:['schirmer'],label:'Teste de Schirmer - Convênio',amount:180,origin:'Convênio'},
+  {key:'exam-oculografia-particular',kind:'exam',match:['oculografia'],label:'Oculografia - Particular',amount:220,origin:'Particular'},
+  {key:'exam-yag-1-particular',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - Particular',amount:520,origin:'Particular'},
+  {key:'exam-yag-1-convenio',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - Convênio',amount:450,origin:'Convênio'},
+  {key:'exam-yag-1-sus',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - SUS',amount:180,origin:'SUS'},
+  {key:'exam-yag-ao-particular',kind:'exam',match:['yag'],label:'YAG Laser - AO - Particular',amount:900,origin:'Particular'},
+  {key:'exam-yag-ao-convenio',kind:'exam',match:['yag'],label:'YAG Laser - AO - Convênio',amount:820,origin:'Convênio'},
+  {key:'exam-yag-ao-sus',kind:'exam',match:['yag'],label:'YAG Laser - AO - SUS',amount:350,origin:'SUS'},
+  {key:'exam-iridotomia-1-particular',kind:'exam',match:['iridotomia'],label:'Iridotomia - 1 olho - Particular',amount:520,origin:'Particular'},
+  {key:'exam-iridotomia-1-convenio',kind:'exam',match:['iridotomia'],label:'Iridotomia - 1 olho - Convênio',amount:450,origin:'Convênio'},
+  {key:'exam-iridotomia-ao-particular',kind:'exam',match:['iridotomia'],label:'Iridotomia - AO - Particular',amount:900,origin:'Particular'},
+  {key:'exam-iridotomia-ao-convenio',kind:'exam',match:['iridotomia'],label:'Iridotomia - AO - Convênio',amount:820,origin:'Convênio'},
+  {key:'exam-check-retina-particular',kind:'exam',match:['check up retina','check-up retina'],label:'Check-up Retina - Particular',amount:1150,origin:'Particular'},
+  {key:'exam-check-retina-convenio',kind:'exam',match:['check up retina','check-up retina'],label:'Check-up Retina - Convênio',amount:980,origin:'Convênio'},
+  {key:'exam-check-glaucoma-particular',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - Particular',amount:1250,origin:'Particular'},
+  {key:'exam-check-glaucoma-convenio',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - Convênio',amount:1100,origin:'Convênio'},
+  {key:'exam-check-glaucoma-sus',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - SUS',amount:900,origin:'SUS'},
+  {key:'exam-kit-refrativa-particular',kind:'exam',match:['kit refrativa'],label:'Kit Refrativa - Particular',amount:700,origin:'Particular'},
+  {key:'exam-kit-refrativa-convenio',kind:'exam',match:['kit refrativa'],label:'Kit Refrativa - Convênio',amount:600,origin:'Convênio'},
+  {key:'exam-us-1-particular',kind:'exam',match:['ultrassom'],label:'Ultrassom - 1 olho - Particular',amount:260,origin:'Particular'},
+  {key:'exam-us-ao-particular',kind:'exam',match:['ultrassom'],label:'Ultrassom - AO - Particular',amount:420,origin:'Particular'},
+  {key:'exam-us-ao-convenio',kind:'exam',match:['ultrassom'],label:'Ultrassom - AO - Convênio',amount:380,origin:'Convênio'},
+
+  // CIRURGIAS
+  {key:'cat-part-visiontech-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Visiontech - 1 olho',amount:3830,origin:'Particular'},
+  {key:'cat-part-visiontech-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Visiontech - 2 olhos',amount:6880,origin:'Particular'},
+  {key:'cat-part-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Asférica - 1 olho',amount:7180,origin:'Particular'},
+  {key:'cat-part-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Asférica - 2 olhos',amount:13380,origin:'Particular'},
+  {key:'cat-part-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Trifocal - 1 olho',amount:14580,origin:'Particular'},
+  {key:'cat-part-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Trifocal - 2 olhos',amount:25940,origin:'Particular'},
+  {key:'cat-part-monotorica-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Mono Tórica - 1 olho',amount:8280,origin:'Particular'},
+  {key:'cat-part-monotorica-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Mono Tórica - 2 olhos',amount:11280,origin:'Particular'},
+  {key:'cat-cassi-visiontech-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Visiontech - 1 olho',amount:2280,origin:'Convênio'},
+  {key:'cat-cassi-visiontech-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Visiontech - 2 olhos',amount:3880,origin:'Convênio'},
+  {key:'cat-cassi-esferica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Esférica - 1 olho',amount:4280,origin:'Convênio'},
+  {key:'cat-cassi-esferica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Esférica - 2 olhos',amount:7480,origin:'Convênio'},
+  {key:'cat-cassi-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Asférica - 1 olho',amount:6080,origin:'Convênio'},
+  {key:'cat-cassi-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Asférica - 2 olhos',amount:10280,origin:'Convênio'},
+  {key:'cat-cassi-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Trifocal - 1 olho',amount:13580,origin:'Convênio'},
+  {key:'cat-cassi-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Trifocal - 2 olhos',amount:23580,origin:'Convênio'},
+  {key:'cat-cassi-monotorica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Mono Tórica - 1 olho',amount:6280,origin:'Convênio'},
+  {key:'cat-cassi-monotorica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Mono Tórica - 2 olhos',amount:11180,origin:'Convênio'},
+  {key:'cat-cassi-tritorica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Tri Tórica - 1 olho',amount:13580,origin:'Convênio'},
+  {key:'cat-cassi-tritorica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Tri Tórica - 2 olhos',amount:23580,origin:'Convênio'},
+  {key:'cat-unimed-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Asférica - 1 olho',amount:3330,origin:'Convênio'},
+  {key:'cat-unimed-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Asférica - 2 olhos',amount:5880,origin:'Convênio'},
+  {key:'cat-unimed-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Trifocal - 1 olho',amount:9880,origin:'Convênio'},
+  {key:'cat-unimed-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Trifocal - 2 olhos',amount:17480,origin:'Convênio'},
+  {key:'faco-trec-1',kind:'surgery',match:['faco trec'],label:'FACO + TREC - 1 olho',amount:9580,origin:'Convênio'},
+  {key:'faco-trec-2',kind:'surgery',match:['faco trec'],label:'FACO + TREC - 2 olhos',amount:18280,origin:'Convênio'},
+  {key:'trec-1',kind:'surgery',match:['trec'],label:'TREC - 1 olho',amount:5850,origin:'Convênio'},
+  {key:'trec-2',kind:'surgery',match:['trec'],label:'TREC - 2 olhos',amount:11480,origin:'Convênio'},
+  {key:'refrativa-1',kind:'surgery',match:['refrativ'],label:'Cirurgia refrativa - 1 olho',amount:4900,origin:'Particular'},
+  {key:'refrativa-2',kind:'surgery',match:['refrativ'],label:'Cirurgia refrativa - 2 olhos',amount:7900,origin:'Particular'},
+  {key:'crosslinking-1',kind:'surgery',match:['crosslink'],label:'Crosslinking - 1 olho',amount:3200,origin:'Particular'},
+  {key:'crosslinking-2',kind:'surgery',match:['crosslink'],label:'Crosslinking - 2 olhos',amount:6400,origin:'Particular'},
+  {key:'pterigio-part-1',kind:'surgery',match:['pterig'],label:'Pterígio Particular/Convênio - 1 olho',amount:3600,origin:'Particular'},
+  {key:'pterigio-part-2',kind:'surgery',match:['pterig'],label:'Pterígio Particular/Convênio - 2 olhos',amount:6250,origin:'Particular'},
+  {key:'pterigio-iamspe-1',kind:'surgery',match:['pterig'],label:'Pterígio IAMSPE - 1 olho',amount:2250,origin:'Convênio'},
+  {key:'pterigio-iamspe-2',kind:'surgery',match:['pterig'],label:'Pterígio IAMSPE - 2 olhos',amount:3950,origin:'Convênio'},
+  {key:'cisto-moll',kind:'surgery',match:['cisto','moll'],label:'Cisto de Moll',amount:850,origin:'Particular'},
+  {key:'calazio-1',kind:'surgery',match:['calazio'],label:'Calázio - 1',amount:850,origin:'Particular'},
+  {key:'calazio-2',kind:'surgery',match:['calazio'],label:'Calázio - 2',amount:1600,origin:'Particular'},
+  {key:'tumor-palpebral',kind:'surgery',match:['tumor palpebr','t u palpebr'],label:'T.U. Palpebral',amount:1800,origin:'Particular'},
+  {key:'lobuloplastia',kind:'surgery',match:['lobuloplast'],label:'Lobuloplastia - 2 lados',amount:1600,origin:'Particular'},
+  {key:'cauterizacao',kind:'surgery',match:['cauteriza','cilio'],label:'Cauterização de cílios - cada olho/sessão',amount:480,origin:'Particular'},
+  {key:'estrabismo',kind:'surgery',match:['estrab'],label:'Cirurgia de estrabismo - com sedação',amount:15500,origin:'Particular'},
+  {key:'blefaro-superior',kind:'surgery',match:['blefaroplastia superior'],exclude:['inferior'],label:'Blefaroplastia superior',amount:6200,origin:'Particular'},
+  {key:'blefaro-inferior',kind:'surgery',match:['blefaroplastia inferior'],label:'Blefaroplastia inferior',amount:6800,origin:'Particular'},
+  {key:'blefaro-sup-inf',kind:'surgery',match:['blefaroplastia superior inferior','blefaroplastia superior + inferior'],label:'Blefaroplastia superior + inferior',amount:12800,origin:'Particular'},
+  {key:'blefaro-sup-lifting',kind:'surgery',match:['blefaroplastia superior','lifting'],label:'Blefaroplastia superior + lifting de supercílio',amount:8600,origin:'Particular'},
+  {key:'blefaro-completa-lifting',kind:'surgery',match:['blefaroplastia','inferior','lifting'],label:'Blefaroplastia superior + inferior + lifting',amount:13300,origin:'Particular'},
+  {key:'supercilio',kind:'surgery',match:['supercilio'],label:'Supercílio',amount:6200,origin:'Particular'},
+  {key:'entropio-1',kind:'surgery',match:['entrop'],label:'Entrópio/Ectrópio - 1 olho',amount:6300,origin:'Particular'},
+  {key:'entropio-2',kind:'surgery',match:['entrop'],label:'Entrópio - ambos os olhos',amount:9800,origin:'Particular'},
+  {key:'ectropio-2',kind:'surgery',match:['ectrop'],label:'Ectrópio - ambos os olhos',amount:9800,origin:'Particular'},
+  {key:'ptose-1',kind:'surgery',match:['ptose'],label:'Ptose - 1 olho',amount:6300,origin:'Particular'},
+  {key:'ptose-2',kind:'surgery',match:['ptose'],label:'Ptose - ambos os olhos',amount:9800,origin:'Particular'},
+  {key:'ptose-pacote',kind:'surgery',match:['ptose'],label:'Ptose na cirurgia - pacote',amount:2600,origin:'Particular'},
+
+  // PROCEDIMENTOS
+  {key:'botox-unica',kind:'procedure',match:['botox','toxina'],label:'Botox - aplicação com retoque',amount:1600,origin:'Particular'},
+  {key:'botox-3',kind:'procedure',match:['botox','toxina'],label:'Botox - pacote 3 aplicações / plano anual',amount:4200,origin:'Particular'},
+  {key:'botox-cirurgia',kind:'procedure',match:['botox','toxina'],label:'Botox na cirurgia',amount:1400,origin:'Particular'},
+  {key:'laser-face',kind:'procedure',match:['laser co2','laser de face','laser face'],label:'Laser de face',amount:3300,origin:'Particular'},
+  {key:'laser-face-cirurgia',kind:'procedure',match:['laser co2','laser de face','laser face'],label:'Laser de face - pacote na cirurgia',amount:2700,origin:'Particular'},
+  {key:'laser-area',kind:'procedure',match:['laser'],label:'Laser por área',amount:960,origin:'Particular'},
+  {key:'laser-area-cirurgia',kind:'procedure',match:['laser'],label:'Laser por área na cirurgia',amount:900,origin:'Particular'},
+  {key:'laser-cicatriz-1',kind:'procedure',match:['laser','cicatriz'],label:'Laser cicatriz - 1 sessão',amount:750,origin:'Particular'},
+  {key:'laser-cicatriz-3',kind:'procedure',match:['laser','cicatriz'],label:'Laser cicatriz - 3 sessões',amount:1900,origin:'Particular'},
+  {key:'laser-cool-peel',kind:'procedure',match:['laser'],label:'Laser frio (Cool Peel)',amount:1600,origin:'Particular'},
+  {key:'laser-combo',kind:'procedure',match:['laser'],label:'Laser Combo - Face + Pescoço + Colo',amount:5000,origin:'Particular'},
+  {key:'us-olhos',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área dos olhos',amount:1600,origin:'Particular'},
+  {key:'us-face',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - face',amount:2400,origin:'Particular'},
+  {key:'us-face-full',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - face full',amount:3500,origin:'Particular'},
+  {key:'us-papada',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - papada',amount:1600,origin:'Particular'},
+  {key:'us-pescoco',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - pescoço',amount:1600,origin:'Particular'},
+  {key:'us-adicional',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área adicional',amount:1200,origin:'Particular'},
+  {key:'us-full-papada',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - full face + papada',amount:4100,origin:'Particular'},
+  {key:'us-corporal',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área corporal',amount:3500,origin:'Particular'},
+  {key:'us-corporal-bi',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área corporal bilateral',amount:4900,origin:'Particular'},
+  {key:'profhilo',kind:'procedure',match:['profhilo'],label:'Profhilo - 1 seringa',amount:2200,origin:'Particular'},
+  {key:'bioestimulador',kind:'procedure',match:['bioestimul'],label:'Bioestimulador de colágeno',amount:2280,origin:'Particular'},
+  {key:'bioestimulador-cirurgia',kind:'procedure',match:['bioestimul'],label:'Bioestimulador - na cirurgia',amount:1900,origin:'Particular'},
+  {key:'skinvive',kind:'procedure',match:['skinvive','skinbooster'],label:'Skinbooster / Skinvive',amount:900,origin:'Particular'},
+  {key:'pdo',kind:'procedure',match:['pdo'],label:'Fios de PDO',amount:450,origin:'Particular'},
+  {key:'preenchimento-labial',kind:'procedure',match:['preenchimento labial'],label:'Preenchimento labial',amount:1500,origin:'Particular'},
+  {key:'acido-hialuronico',kind:'procedure',match:['hialuron'],label:'Ácido hialurônico - 1 seringa',amount:1350,origin:'Particular'},
+  {key:'maos',kind:'procedure',match:['mao','mãos'],label:'Rejuvenescimento mãos - Bioestimulador + Ácido H.',amount:2900,origin:'Particular'},
+  {key:'anti-vegf-individual',kind:'procedure',match:['anti vegf'],label:'Anti-VEGF / Intravítreo - individual',amount:4500,origin:'Particular'},
+  {key:'anti-vegf-3',kind:'procedure',match:['anti vegf'],label:'Anti-VEGF / Intravítreo - pacote com 3',amount:12500,origin:'Particular'},
+  {key:'triancinolona',kind:'procedure',match:['triancinolona'],label:'Triancinolona',amount:1200,origin:'Particular'},
+  {key:'ozurdex',kind:'procedure',match:['ozurdex'],label:'Ozurdex - cada aplicação',amount:4800,origin:'Particular'},
+  {key:'avastin-1',kind:'procedure',match:['avastin'],label:'Avastin - individual',amount:1900,origin:'Particular'},
+  {key:'avastin-3',kind:'procedure',match:['avastin'],label:'Avastin - 3 aplicações',amount:4500,origin:'Particular'},
+  {key:'vabysmo-1',kind:'procedure',match:['vabysmo'],label:'Vabysmo - 1 aplicação',amount:5250,origin:'Particular'},
+  {key:'vabysmo-4',kind:'procedure',match:['vabysmo'],label:'Vabysmo - 4 aplicações + OCT',amount:19900,origin:'Particular'}
+];
+
+const presetAppliesToName = (preset,name) => {
+  const n=normalizeCatalogLabel(name);
+  const matches=(preset.match||[]).some(term=>n.includes(normalizeCatalogLabel(term)));
+  const excluded=(preset.exclude||[]).some(term=>n.includes(normalizeCatalogLabel(term)));
+  return matches && !excluded;
+};
+
 const normalizeCatalogLabel = value => String(value||'')
   .normalize('NFD')
   .replace(/[\u0300-\u036f]/g,'')
@@ -141,7 +316,22 @@ const groupLaunchRows = (rows, kind) => {
           launchedBy:r.launched_by,
           launchedByName:r.launched_by_name||'',
           exam_type_ids:[],
-          exam_names:[]
+          exam_names:[],
+          insurance:r.insurances?.name||'',
+          insurance_id:r.insurances?.id||'',
+          payment_origin:r.payment_origin||'',
+          total_amount:numericValue(r.total_amount),
+          received_amount:numericValue(r.received_amount),
+          payment_method:r.payment_method||'',
+          installments:Number(r.installments||1),
+          financial_status:r.financial_status||'Pendente',
+          expected_receipt_date:r.expected_receipt_date||'',
+          received_date:r.received_date||'',
+          billed_amount:numericValue(r.billed_amount),
+          billing_competence:r.billing_competence||'',
+          billing_date:r.billing_date||'',
+          financial_notes:r.financial_notes||'',
+          price_preset_key:r.price_preset_key||''
         });
       }
       const g=groups.get(groupId);
@@ -190,6 +380,19 @@ const groupLaunchRows = (rows, kind) => {
       arrival:r.arrival_time||'',
       time:r.surgery_time||'',
       payment:r.payment_status||'',
+      payment_origin:r.payment_origin||'',
+      total_amount:numericValue(r.total_amount),
+      received_amount:numericValue(r.received_amount),
+      payment_method:r.payment_method||'',
+      installments:r.installments||1,
+      financial_status:r.financial_status||'Pendente',
+      expected_receipt_date:r.expected_receipt_date||'',
+      received_date:r.received_date||'',
+      billed_amount:numericValue(r.billed_amount),
+      billing_competence:r.billing_competence||'',
+      billing_date:r.billing_date||'',
+      financial_notes:r.financial_notes||'',
+      procedure_finance:{},
       classification_review:r.record_kind==='review'
     }));
 };
@@ -215,6 +418,21 @@ const mapProcedureRows = (rows, surgeryById=new Map(), surgeryByGroup=new Map())
     status:r.status,
     time:r.procedure_time||'',
     payment:r.payment_status||'Não informado',
+    payment_origin:r.payment_origin||'',
+    total_amount:numericValue(r.total_amount),
+    received_amount:numericValue(r.received_amount),
+    payment_method:r.payment_method||'',
+    installments:r.installments||1,
+    financial_status:r.financial_status||'Pendente',
+    expected_receipt_date:r.expected_receipt_date||'',
+    received_date:r.received_date||'',
+    billed_amount:numericValue(r.billed_amount),
+    billing_competence:r.billing_competence||'',
+    billing_date:r.billing_date||'',
+    financial_notes:r.financial_notes||'',
+    price_preset_key:r.price_preset_key||'',
+    included_in_package:r.included_in_package!==false,
+    additional_amount:numericValue(r.additional_amount),
     obs:r.observation||'',
     launchedBy:r.launched_by,
     launchedByName:r.launched_by_name||'',
@@ -380,6 +598,50 @@ function TrendLineChart({title,labels,series,percent=false}){
   </div>;
 }
 
+
+function FinancialLineChart({title,labels,series}){
+  const width=860,height=290;
+  const pad={l:82,r:24,t:34,b:48};
+  const values=series.flatMap(item=>item.values||[]).map(numericValue);
+  const max=Math.max(...values,1);
+  const plotW=width-pad.l-pad.r,plotH=height-pad.t-pad.b;
+  const x=i=>labels.length<=1?pad.l+plotW/2:pad.l+(i/(labels.length-1))*plotW;
+  const y=v=>pad.t+plotH-(numericValue(v)/max)*plotH;
+  const grid=[0,.25,.5,.75,1];
+  return <div className="card finance-line-card">
+    <div className="finance-chart-head"><div><span>EVOLUÇÃO FINANCEIRA</span><h3>{title}</h3><p>Produção, recebimentos e potencial do período.</p></div>
+      <div className="finance-line-legend">{series.map(s=><span key={s.name}><i style={{background:s.color}}/>{s.name}</span>)}</div>
+    </div>
+    <svg className="finance-line-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+      {grid.map(g=>{const value=max*g;const gy=y(value);return <g key={g}>
+        <line x1={pad.l} x2={width-pad.r} y1={gy} y2={gy} stroke="#e7edef" strokeWidth="1"/>
+        <text x={pad.l-10} y={gy+4} textAnchor="end" className="finance-axis">{moneyBR(value).replace(',00','')}</text>
+      </g>})}
+      {labels.map((label,i)=><text key={`${label}-${i}`} x={x(i)} y={height-15} textAnchor="middle" className="finance-axis">{label}</text>)}
+      {series.map(s=>{
+        const points=(s.values||[]).map((v,i)=>`${x(i)},${y(v)}`).join(' ');
+        return <g key={s.name}>
+          <polyline points={points} fill="none" stroke={s.color} strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
+          {(s.values||[]).map((v,i)=><circle key={i} cx={x(i)} cy={y(v)} r="4.5" fill="#fff" stroke={s.color} strokeWidth="2.5"/>)}
+        </g>;
+      })}
+    </svg>
+  </div>;
+}
+
+function FinancialBars({title,subtitle,data}){
+  const entries=Object.entries(data||{}).filter(([,v])=>numericValue(v)>0).sort((a,b)=>numericValue(b[1])-numericValue(a[1])).slice(0,10);
+  const max=Math.max(...entries.map(([,v])=>numericValue(v)),1);
+  return <div className="card finance-ranking-card">
+    <div className="finance-chart-head"><div><span>ANÁLISE FINANCEIRA</span><h3>{title}</h3>{subtitle&&<p>{subtitle}</p>}</div></div>
+    {entries.length?<div className="finance-ranking-list">{entries.map(([label,value])=><div key={label} className="finance-ranking-row">
+      <div className="finance-ranking-label" title={label}>{label}</div>
+      <div className="finance-ranking-track"><i style={{width:`${Math.max(3,(numericValue(value)/max)*100)}%`}}/></div>
+      <b>{moneyBR(value)}</b>
+    </div>)}</div>:<div className="empty">Sem valores financeiros para os filtros atuais.</div>}
+  </div>;
+}
+
 function StatusTypeMatrix({title,subtitle,statuses,data,totalByStatus,labelName='Tipo'}){
   return <div className="card status-matrix-card">
     <div className="status-matrix-head">
@@ -441,6 +703,24 @@ function DoctorTypeMatrix({title,subtitle,rows,itemLabel='Procedimento'}){
     </div> : <div className="doctor-type-empty">
       Nenhum dado de {itemLabel.toLowerCase()} disponível para os filtros atuais.
     </div>}
+  </div>;
+}
+
+
+function StandardPriceField({kind,names,value,onApply}){
+  const cleanNames=(Array.isArray(names)?names:[names]).filter(Boolean);
+  const options=STANDARD_PRICE_PRESETS.filter(p=>p.kind===kind&&cleanNames.some(name=>presetAppliesToName(p,name)));
+  return <div className="standard-price-field">
+    <label>Valor padrão sugerido</label>
+    <select value={value||''} onChange={e=>{
+      const preset=STANDARD_PRICE_PRESETS.find(p=>p.key===e.target.value);
+      if(preset) onApply(preset);
+      else onApply(null);
+    }}>
+      <option value="">Selecione uma opção da tabela (opcional)</option>
+      {options.map(p=><option key={p.key} value={p.key}>{p.label} - {moneyBR(p.amount)}</option>)}
+    </select>
+    <small>Ao selecionar, o valor é preenchido automaticamente. Você pode alterar o valor manualmente depois.</small>
   </div>;
 }
 
@@ -596,6 +876,15 @@ function App(){
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
   const [dashPatient,setDashPatient] = useState('');
+  const [finMonth,setFinMonth] = useState(monthNow);
+  const [finDoctor,setFinDoctor] = useState('');
+  const [finInsurance,setFinInsurance] = useState('');
+  const [finOrigin,setFinOrigin] = useState('');
+  const [finSource,setFinSource] = useState('');
+  const [finOperationalStatus,setFinOperationalStatus] = useState('');
+  const [finStatus,setFinStatus] = useState('');
+  const [finMethod,setFinMethod] = useState('');
+  const [finSearch,setFinSearch] = useState('');
   const [followDay,setFollowDay] = useState('');
   const [followType,setFollowType] = useState('');
   const [followDoctor,setFollowDoctor] = useState('');
@@ -609,16 +898,20 @@ function App(){
   const pdfPage2Ref = useRef(null);
   const pdfPage3Ref = useRef(null);
 
+  const emptyFinanceForm = () => ({
+    payment_origin:'Particular',total_amount:'',received_amount:'',payment_method:'',installments:'1',
+    financial_status:'Pendente',expected_receipt_date:'',received_date:'',billed_amount:'',billing_competence:'',billing_date:'',financial_notes:'',price_preset_key:''
+  });
   const [examForm,setExamForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:'',obs:''
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',
-    insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:''
+    date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},eye:'Não se aplica',
+    insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [pForm,setPForm] = useState({
     date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
-    insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:'',obs:''
+    insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [followupForm,setFollowupForm] = useState({
     followup_date:todayISO(),status:'A fazer',next_contact_date:'',responsible:'',note:''
@@ -675,14 +968,15 @@ function App(){
       supabase.from('insurances').select('*').eq('active',true).order('name'),
       supabase.from('profiles').select('id,full_name,role,active').eq('active',true).order('full_name'),
       supabase.from('exams').select(`
-        id,launch_group_id,exam_date,status,observation,launched_by,launched_by_name,
+        id,launch_group_id,exam_date,status,observation,launched_by,launched_by_name,insurance_id,payment_origin,total_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,
         patients(id,full_name,whatsapp),
         doctors:doctors!exams_doctor_id_fkey(id,name),
         indicated_by:doctors!exams_indicated_by_doctor_id_fkey(id,name),
-        exam_types(id,name)
+        exam_types(id,name),
+        insurances(id,name)
       `).order('exam_date',{ascending:false}),
       supabase.from('surgeries').select(`
-        id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,surgery_type_id,record_kind,
+        id,launch_group_id,surgery_date,eye,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,surgery_type_id,record_kind,payment_origin,total_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,
         patients(id,full_name,whatsapp),
         doctors:doctors!surgeries_doctor_id_fkey(id,name),
         indicated_by:doctors!surgeries_indicated_by_doctor_id_fkey(id,name),
@@ -691,7 +985,7 @@ function App(){
         insurances(id,name)
       `).order('surgery_date',{ascending:false}),
       supabase.from('procedure_records').select(`
-        id,launch_group_id,procedure_date,status,procedure_time,payment_status,observation,launched_by,launched_by_name,surgery_id,surgery_group_id,legacy_surgery_id,record_kind,procedure_id,eye,
+        id,launch_group_id,procedure_date,status,procedure_time,payment_status,observation,launched_by,launched_by_name,surgery_id,surgery_group_id,legacy_surgery_id,record_kind,procedure_id,eye,payment_origin,total_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,included_in_package,additional_amount,
         patients(id,full_name,whatsapp),
         doctors:doctors!procedure_records_doctor_id_fkey(id,name),
         indicated_by:doctors!procedure_records_indicated_by_doctor_id_fkey(id,name),
@@ -815,6 +1109,9 @@ function App(){
         ...item,
         procedure_ids:procedureIds,
         procedure_names:procedureNames,
+        procedure_finance:Object.fromEntries(linked.filter(x=>x.procedure_id).map(x=>[
+          x.procedure_id,{included:x.included_in_package!==false,amount:numericValue(x.additional_amount)}
+        ])),
         procedure:procedureNames.join(' • ')
       };
     });
@@ -864,13 +1161,19 @@ function App(){
         exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId, status:examForm.status,
+        insurance_id:examForm.insurance_id||null,
+        payment_origin:examForm.payment_origin||'Particular',
+        total_amount:numericValue(examForm.total_amount),received_amount:numericValue(examForm.received_amount),
+        payment_method:examForm.payment_method||null,installments:Number(examForm.installments||1),financial_status:examForm.financial_status||'Pendente',
+        expected_receipt_date:examForm.expected_receipt_date||null,received_date:examForm.received_date||null,billed_amount:numericValue(examForm.billed_amount),
+        billing_competence:examForm.billing_competence||null,billing_date:examForm.billing_date||null,financial_notes:examForm.financial_notes||null,price_preset_key:examForm.price_preset_key||null,
         observation:examForm.obs||null, launched_by:session.user.id,
         launched_by_name:examLaunchName
       }));
       const {error}=await supabase.from('exams').insert(rows);
       if(error) throw error;
       setExamModal(false);
-      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
@@ -893,6 +1196,20 @@ function App(){
       status:sourceForm.status||'Solicitação',
       procedure_time:sourceForm.time||null,
       payment_status:sourceForm.payment||'Não informado',
+      payment_origin:sourceForm.payment_origin||'Particular',
+      total_amount:0,
+      received_amount:0,
+      payment_method:sourceForm.payment_method||null,
+      installments:Number(sourceForm.installments||1),
+      financial_status:sourceForm.financial_status||'Pendente',
+      expected_receipt_date:sourceForm.expected_receipt_date||null,
+      received_date:sourceForm.received_date||null,
+      billed_amount:0,
+      billing_competence:sourceForm.billing_competence||null,
+      billing_date:sourceForm.billing_date||null,
+      financial_notes:sourceForm.financial_notes||null,
+      included_in_package:sourceForm.procedure_finance?.[procedureId]?.included!==false,
+      additional_amount:sourceForm.procedure_finance?.[procedureId]?.included===false ? numericValue(sourceForm.procedure_finance?.[procedureId]?.amount) : 0,
       observation:sourceForm.obs||null,
       launched_by:session.user.id,
       launched_by_name:launcherName
@@ -923,6 +1240,19 @@ function App(){
         arrival_time:sForm.arrival||null,
         surgery_time:sForm.time||null,
         payment_status:sForm.payment,
+        payment_origin:sForm.payment_origin||'Particular',
+        total_amount:numericValue(sForm.total_amount),
+        received_amount:numericValue(sForm.received_amount),
+        payment_method:sForm.payment_method||null,
+        installments:Number(sForm.installments||1),
+        financial_status:sForm.financial_status||'Pendente',
+        expected_receipt_date:sForm.expected_receipt_date||null,
+        received_date:sForm.received_date||null,
+        billed_amount:numericValue(sForm.billed_amount),
+        billing_competence:sForm.billing_competence||null,
+        billing_date:sForm.billing_date||null,
+        financial_notes:sForm.financial_notes||null,
+        price_preset_key:sForm.price_preset_key||null,
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:surgeryLaunchName
@@ -969,9 +1299,11 @@ function App(){
       doctor_id:r.doctor_id,
       indicated_by_doctor_id:r.indicatedById||'',
       exam_type_ids:r.exam_type_ids||[],
-      status:r.status,
+      insurance_id:r.insurance_id||'',status:r.status,
       launcher:r.launchedByName || currentLaunchName || '',
-      obs:r.obs || ''
+      obs:r.obs || '',payment_origin:r.payment_origin||financeOrigin(r),total_amount:r.total_amount||'',received_amount:r.received_amount||'',
+      payment_method:r.payment_method||'',installments:String(r.installments||1),financial_status:r.financial_status||'Pendente',
+      expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||''
     });
     setExamModal(true);
   };
@@ -992,6 +1324,11 @@ function App(){
       arrival:r.arrival || '',
       time:r.time || '',
       payment:r.payment || 'Não informado',
+      payment_origin:r.payment_origin||financeOrigin(r),
+      total_amount:r.total_amount||'',received_amount:r.received_amount||'',payment_method:r.payment_method||'',installments:String(r.installments||1),
+      financial_status:r.financial_status||'Pendente',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',
+      procedure_finance:r.procedure_finance||{},
       launcher:r.launchedByName || currentLaunchName || '',
       obs:r.obs || ''
     });
@@ -1012,6 +1349,10 @@ function App(){
       status:r.status||'Solicitação',
       time:r.time||'',
       payment:r.payment||'Não informado',
+      payment_origin:r.payment_origin||financeOrigin(r),
+      total_amount:r.total_amount||'',received_amount:r.received_amount||'',payment_method:r.payment_method||'',installments:String(r.installments||1),
+      financial_status:r.financial_status||'Pendente',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',
       launcher:r.launchedByName||currentLaunchName||'',
       obs:r.obs||''
     });
@@ -1049,6 +1390,11 @@ function App(){
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId,
         status:examForm.status,
+        insurance_id:examForm.insurance_id||null,
+        payment_origin:examForm.payment_origin||'Particular',total_amount:numericValue(examForm.total_amount),received_amount:numericValue(examForm.received_amount),
+        payment_method:examForm.payment_method||null,installments:Number(examForm.installments||1),financial_status:examForm.financial_status||'Pendente',
+        expected_receipt_date:examForm.expected_receipt_date||null,received_date:examForm.received_date||null,billed_amount:numericValue(examForm.billed_amount),
+        billing_competence:examForm.billing_competence||null,billing_date:examForm.billing_date||null,financial_notes:examForm.financial_notes||null,price_preset_key:examForm.price_preset_key||null,
         observation:examForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:examLaunchName
@@ -1059,7 +1405,7 @@ function App(){
 
       setExamModal(false);
       setEditingExamId(null);
-      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
+      setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -1100,6 +1446,19 @@ function App(){
         arrival_time:sForm.arrival||null,
         surgery_time:sForm.time||null,
         payment_status:sForm.payment,
+        payment_origin:sForm.payment_origin||'Particular',
+        total_amount:numericValue(sForm.total_amount),
+        received_amount:numericValue(sForm.received_amount),
+        payment_method:sForm.payment_method||null,
+        installments:Number(sForm.installments||1),
+        financial_status:sForm.financial_status||'Pendente',
+        expected_receipt_date:sForm.expected_receipt_date||null,
+        received_date:sForm.received_date||null,
+        billed_amount:numericValue(sForm.billed_amount),
+        billing_competence:sForm.billing_competence||null,
+        billing_date:sForm.billing_date||null,
+        financial_notes:sForm.financial_notes||null,
+        price_preset_key:sForm.price_preset_key||null,
         observation:sForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:surgeryLaunchName
@@ -1124,7 +1483,7 @@ function App(){
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -1153,6 +1512,21 @@ function App(){
         status:pForm.status,
         procedure_time:pForm.time||null,
         payment_status:pForm.payment,
+        payment_origin:pForm.payment_origin||'Particular',
+        total_amount:numericValue(pForm.total_amount),
+        received_amount:numericValue(pForm.received_amount),
+        payment_method:pForm.payment_method||null,
+        installments:Number(pForm.installments||1),
+        financial_status:pForm.financial_status||'Pendente',
+        expected_receipt_date:pForm.expected_receipt_date||null,
+        received_date:pForm.received_date||null,
+        billed_amount:numericValue(pForm.billed_amount),
+        billing_competence:pForm.billing_competence||null,
+        billing_date:pForm.billing_date||null,
+        financial_notes:pForm.financial_notes||null,
+        price_preset_key:pForm.price_preset_key||null,
+        included_in_package:false,
+        additional_amount:0,
         observation:pForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:procedureLaunchName
@@ -1160,7 +1534,7 @@ function App(){
       const {error}=await supabase.from('procedure_records').insert(rows);
       if(error) throw error;
       setProcedureModal(false);
-      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -1182,6 +1556,7 @@ function App(){
       if(deleteError) throw deleteError;
 
       const launch_group_id=original.group_id||crypto.randomUUID();
+      const originalProcedureItems=procedureRecords.filter(item=>ids.includes(item.id));
       const rows=pForm.procedure_ids.map(procedureId=>({
         launch_group_id,
         procedure_date:pForm.date,
@@ -1196,6 +1571,25 @@ function App(){
         status:pForm.status,
         procedure_time:pForm.time||null,
         payment_status:pForm.payment,
+        payment_origin:pForm.payment_origin||'Particular',
+        total_amount:numericValue(pForm.total_amount),
+        received_amount:numericValue(pForm.received_amount),
+        payment_method:pForm.payment_method||null,
+        installments:Number(pForm.installments||1),
+        financial_status:pForm.financial_status||'Pendente',
+        expected_receipt_date:pForm.expected_receipt_date||null,
+        received_date:pForm.received_date||null,
+        billed_amount:numericValue(pForm.billed_amount),
+        billing_competence:pForm.billing_competence||null,
+        billing_date:pForm.billing_date||null,
+        financial_notes:pForm.financial_notes||null,
+        price_preset_key:pForm.price_preset_key||null,
+        included_in_package:(original.surgery_id||original.surgery_group_id)
+          ? (originalProcedureItems.find(item=>item.procedure_id===procedureId)?.included_in_package!==false)
+          : false,
+        additional_amount:(original.surgery_id||original.surgery_group_id)
+          ? numericValue(originalProcedureItems.find(item=>item.procedure_id===procedureId)?.additional_amount)
+          : 0,
         observation:pForm.obs||null,
         launched_by:session.user.id,
         launched_by_name:procedureLaunchName
@@ -1206,7 +1600,7 @@ function App(){
 
       setProcedureModal(false);
       setEditingProcedureId(null);
-      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+      setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -1218,19 +1612,19 @@ function App(){
   const closeExamModal = ()=>{
     setExamModal(false);
     setEditingExamId(null);
-    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});
+    setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
   };
 
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+    setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
   };
 
   const closeProcedureModal = ()=>{
     setProcedureModal(false);
     setEditingProcedureId(null);
-    setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+    setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
   };
 
   const delExam = async id=>{
@@ -1426,6 +1820,85 @@ function App(){
     alert('Procedimentos filtrados excluídos com sucesso.');
   };
 
+
+  const financialRows = useMemo(()=>{
+    const examRows=records.map(r=>({
+      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.exam,
+      operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
+      total:numericValue(r.total_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      installments:Number(r.installments||1),notes:r.financial_notes||'',base_record:r
+    }));
+    const surgeryRows=surgeries.map(r=>({
+      key:`surgery:${r.group_id||r.id}`,source:'Cirurgia',source_type:'surgery',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.surgery_type,
+      operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
+      total:numericValue(r.total_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      installments:Number(r.installments||1),notes:r.financial_notes||'',base_record:r
+    }));
+
+    // Procedimento avulso: um lançamento financeiro por launch_group_id, mesmo que tenha vários procedimentos.
+    const standalone=groupProcedureRows(procedureRecords.filter(r=>!r.surgery_id&&!r.surgery_group_id)).map(r=>({
+      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
+      operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
+      total:numericValue(r.total_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      installments:Number(r.installments||1),notes:r.financial_notes||'',base_record:r
+    }));
+
+    // Procedimentos vinculados só entram financeiramente quando marcados como cobrados à parte.
+    const extras=procedureRecords.filter(r=>(r.surgery_id||r.surgery_group_id)&&r.included_in_package===false&&numericValue(r.additional_amount)>0).map(r=>({
+      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
+      operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
+      total:numericValue(r.additional_amount),received:0,billed:0,expected_receipt_date:r.expected_receipt_date||'',received_date:'',installments:Number(r.installments||1),notes:r.financial_notes||'',base_record:r
+    }));
+    return [...examRows,...surgeryRows,...standalone,...extras];
+  },[records,surgeries,procedureRecords]);
+
+  const filteredFinancialRows = useMemo(()=>{
+    const q=finSearch.trim().toLowerCase();
+    return financialRows.filter(r=>
+      (!finMonth||r.date?.startsWith(finMonth)) &&
+      (!finDoctor||r.doctor_id===finDoctor) &&
+      (!finInsurance||r.insurance_id===finInsurance || (finInsurance==='particular'&&!r.insurance_id)) &&
+      (!finOrigin||r.payment_origin===finOrigin) &&
+      (!finSource||r.source_type===finSource) &&
+      (!finOperationalStatus||r.operational_status===finOperationalStatus) &&
+      (!finStatus||r.financial_status===finStatus) &&
+      (!finMethod||r.payment_method===finMethod) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.service||'').toLowerCase().includes(q))
+    );
+  },[financialRows,finMonth,finDoctor,finInsurance,finOrigin,finSource,finOperationalStatus,finStatus,finMethod,finSearch]);
+
+  const financeSummary=useMemo(()=>{
+    const valid=filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status));
+    const realized=valid.filter(r=>isRealizedOperational(r.operational_status));
+    const production=realized.reduce((s,r)=>s+r.total,0);
+    const received=valid.reduce((s,r)=>s+r.received,0);
+    const receivable=realized.reduce((s,r)=>s+Math.max(r.total-r.received,0),0);
+    const potential=valid.filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
+    const particular=valid.filter(r=>r.payment_origin==='Particular').reduce((s,r)=>s+r.total,0);
+    const insurance=valid.filter(r=>r.payment_origin==='Convênio').reduce((s,r)=>s+r.total,0);
+    const lost=filteredFinancialRows.filter(r=>isCanceledOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
+    const billed=valid.reduce((s,r)=>s+(r.billed||0),0);
+    return {production,received,receivable,potential,particular,insurance,lost,billed};
+  },[filteredFinancialRows]);
+
+  const financeAnalytics=useMemo(()=>{
+    const base=financialRows.filter(r=>(!finDoctor||r.doctor_id===finDoctor)&&(!finOrigin||r.payment_origin===finOrigin));
+    const baseMonth=finMonth||monthNow;
+    const months=Array.from({length:6},(_,i)=>shiftMonth(baseMonth,i-5));
+    const monthRows=m=>base.filter(r=>r.date?.startsWith(m)&&!isCanceledOperational(r.operational_status));
+    const productionTrend=months.map(m=>monthRows(m).filter(r=>isRealizedOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
+    const receivedTrend=months.map(m=>monthRows(m).reduce((s,r)=>s+r.received,0));
+    const potentialTrend=months.map(m=>monthRows(m).filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
+    const sumBy=key=>filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status)).reduce((acc,r)=>{const k=r[key]||'Não informado';acc[k]=(acc[k]||0)+r.total;return acc;},{});
+    return {
+      labels:months.map(shortMonthLabel),productionTrend,receivedTrend,potentialTrend,
+      byInsurance:sumBy('insurance'),byDoctor:sumBy('doctor'),byService:sumBy('service'),byMethod:sumBy('payment_method'),byOrigin:sumBy('payment_origin')
+    };
+  },[financialRows,filteredFinancialRows,finMonth,finDoctor,finOrigin]);
 
   const followupSourceRows = useMemo(()=>{
     const byKey=new Map(followups.map(f=>[`${f.source_type}:${f.source_group_id}`,f]));
@@ -4026,6 +4499,7 @@ function App(){
         <button className={page==='procedimentos'?'active':''} onClick={()=>setPage('procedimentos')}>🩺 <span>Procedimentos</span></button>
         <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}>🔄 <span>Follow-up</span></button>
         <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}>📊 <span>Resultados</span></button>
+        <button className={page==='financeiro'?'active':''} onClick={()=>setPage('financeiro')}>💰 <span>Financeiro</span></button>
         <button className={page==='cadastros'?'active':''} onClick={()=>setPage('cadastros')}>⚙️ <span>Cadastros</span></button>
         <button className={page==='manual'?'active':''} onClick={()=>setPage('manual')}>📖 <span>Manual</span></button>
       </div>
@@ -4038,7 +4512,7 @@ function App(){
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',exam_type_ids:[],status:'Agendado',launcher:currentLaunchName||'',obs:''});setExamModal(true)}}>+ Novo exame</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setExamModal(true)}}>+ Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -4081,7 +4555,7 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}>+ Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
@@ -4127,7 +4601,7 @@ function App(){
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
             <button className="btn btn-primary" onClick={()=>{
               setEditingProcedureId(null);
-              setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:''});
+              setPForm({date:todayISO(),patient:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
               setProcedureModal(true);
             }}>+ Novo procedimento</button>
           </div>
@@ -4590,6 +5064,71 @@ function App(){
               return <tr key={r.key}><td><b>{r.name}</b></td><td>{r.exams}</td><td>{r.surgeries}</td><td>{r.procedures}</td><td><b>{total}</b></td><td>{all?Math.round(total/all*100):0}%</td></tr>
             })}</tbody></table></div>
           </div>
+        </div>
+      </section>}
+
+      {page==='financeiro'&&<section className="finance-page">
+        <div className="topbar finance-topbar">
+          <div><div className="eyebrow">GESTÃO FINANCEIRA</div><h1>Financeiro</h1><div className="subtitle">Produção, recebimentos, contas a receber e potencial financeiro sem duplicar valores de pacotes cirúrgicos.</div></div>
+        </div>
+
+        <div className="card finance-filter-card">
+          <div className="filter-title">Filtros financeiros</div>
+          <div className="finance-filters">
+            <input type="month" value={finMonth} onChange={e=>setFinMonth(e.target.value)}/>
+            <Select value={finDoctor} setValue={setFinDoctor} options={doctors} first="Todos os médicos"/>
+            <select value={finInsurance} onChange={e=>setFinInsurance(e.target.value)}><option value="">Todos os convênios</option><option value="particular">Particular</option>{insurances.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select>
+            <Select value={finOrigin} setValue={setFinOrigin} options={['Particular','Convênio']} first="Particular + Convênio"/>
+            <select value={finSource} onChange={e=>setFinSource(e.target.value)}><option value="">Cirurgias + Procedimentos</option><option value="surgery">Cirurgias</option><option value="procedure">Procedimentos</option><option value="extra">Adicionais de pacote</option></select>
+            <Select value={finOperationalStatus} setValue={setFinOperationalStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada','Realizado','Agendado','Cancelado']} first="Todos os status operacionais"/>
+            <Select value={finStatus} setValue={setFinStatus} options={['Não definido','Pendente','Parcial','Recebido','Faturado ao convênio','Aguardando convênio','Glosado']} first="Todos os status financeiros"/>
+            <Select value={finMethod} setValue={setFinMethod} options={['PIX','Dinheiro','Débito','Crédito','Boleto','Transferência','Convênio']} first="Todas as formas de pagamento"/>
+            <input value={finSearch} onChange={e=>setFinSearch(e.target.value)} placeholder="Buscar paciente ou serviço"/>
+            <button className="btn btn-light" onClick={()=>{setFinMonth('');setFinDoctor('');setFinInsurance('');setFinOrigin('');setFinSource('');setFinOperationalStatus('');setFinStatus('');setFinMethod('');setFinSearch('')}}>Limpar</button>
+          </div>
+        </div>
+
+        <div className="finance-kpis">
+          <div className="finance-kpi primary"><span>Produção realizada</span><strong>{moneyBR(financeSummary.production)}</strong><small>Serviços efetivamente realizados</small></div>
+          <div className="finance-kpi success"><span>Recebido</span><strong>{moneyBR(financeSummary.received)}</strong><small>Valores já recebidos</small></div>
+          <div className="finance-kpi warning"><span>A receber</span><strong>{moneyBR(financeSummary.receivable)}</strong><small>Realizados ainda não recebidos</small></div>
+          <div className="finance-kpi info"><span>Potencial em aberto</span><strong>{moneyBR(financeSummary.potential)}</strong><small>Agendados, autorizados e pendentes</small></div>
+          <div className="finance-kpi"><span>Particular</span><strong>{moneyBR(financeSummary.particular)}</strong><small>Valor total particular</small></div>
+          <div className="finance-kpi"><span>Convênios</span><strong>{moneyBR(financeSummary.insurance)}</strong><small>Valor total por convênios</small></div>
+        </div>
+
+        <div className="finance-main-grid">
+          <FinancialLineChart title="Previsto x realizado x recebido" labels={financeAnalytics.labels} series={[
+            {name:'Produção realizada',color:'#315f72',values:financeAnalytics.productionTrend},
+            {name:'Recebido',color:'#4f8a6b',values:financeAnalytics.receivedTrend},
+            {name:'Potencial',color:'#b9802b',values:financeAnalytics.potentialTrend}
+          ]}/>
+          <div className="card finance-side-summary">
+            <div className="finance-chart-head"><div><span>LEITURA RÁPIDA</span><h3>Posição financeira</h3><p>Resumo dos valores filtrados.</p></div></div>
+            <div className="finance-summary-list">
+              <div><span>Valor faturado a convênios</span><b>{moneyBR(financeSummary.billed)}</b></div>
+              <div><span>Cancelado / perdido</span><b>{moneyBR(financeSummary.lost)}</b></div>
+              <div><span>Conversão em recebimento</span><b>{financeSummary.production?Math.round((financeSummary.received/financeSummary.production)*100):0}%</b></div>
+              <div><span>Lançamentos financeiros</span><b>{filteredFinancialRows.length}</b></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="finance-analysis-grid">
+          <FinancialBars title="Faturamento por convênio" subtitle="Particular também aparece para comparação." data={financeAnalytics.byInsurance}/>
+          <FinancialBars title="Faturamento por médico" subtitle="Valor associado aos atendimentos de cada profissional." data={financeAnalytics.byDoctor}/>
+          <FinancialBars title="Por cirurgia / procedimento" subtitle="Serviços com maior impacto financeiro." data={financeAnalytics.byService}/>
+          <FinancialBars title="Por forma de pagamento" subtitle="Distribuição dos valores por meio de recebimento." data={financeAnalytics.byMethod}/>
+        </div>
+
+        <div className="card finance-detail-card">
+          <div className="section-title"><div><h2>Detalhamento financeiro</h2><p className="finance-detail-subtitle">Produção e recebimento por lançamento. Pacotes aparecem uma única vez.</p></div></div>
+          <div className="table-wrap"><table className="finance-table"><thead><tr><th>Data</th><th>Paciente</th><th>Origem</th><th>Serviço</th><th>Médico</th><th>Convênio</th><th>Status</th><th>Status financeiro</th><th>Valor</th><th>Recebido</th><th>Saldo</th><th>Forma</th></tr></thead>
+          <tbody>{filteredFinancialRows.length?[...filteredFinancialRows].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).map(r=><tr key={r.key}>
+            <td>{brDate(r.date)}</td><td><b>{r.patient}</b></td><td>{r.source}</td><td>{r.service}</td><td>{r.doctor}</td><td>{r.insurance||'Particular'}</td>
+            <td><span className={`status ${statusClass(r.operational_status)}`}>{r.operational_status}</span></td><td><span className={`finance-status finance-${statusClass(r.financial_status)}`}>{r.financial_status}</span></td>
+            <td className="money-cell">{moneyBR(r.total)}</td><td className="money-cell received">{moneyBR(r.received)}</td><td className="money-cell pending">{moneyBR(Math.max(r.total-r.received,0))}</td><td>{r.payment_method||'—'}</td>
+          </tr>):<tr><td colSpan="12" className="empty">Nenhum valor financeiro encontrado.</td></tr>}</tbody></table></div>
         </div>
       </section>}
 
@@ -5645,6 +6184,7 @@ function App(){
             </div>
           </div>
         </Field>
+        <Field label="Convênio"><Select value={examForm.insurance_id} setValue={v=>setExamForm({...examForm,insurance_id:v,payment_origin:v?'Convênio':'Particular'})} options={insurances} first="Particular / selecione"/></Field>
         <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Pendente','Realizado','Cancelado']}/></Field>
         <Field label="Lançado por">
           <Select
@@ -5654,6 +6194,23 @@ function App(){
             first="Selecione quem lançou"
           />
         </Field>
+        <div className="finance-form-section full">
+          <div className="finance-form-title"><span>FINANCEIRO</span><b>Dados do exame</b><small>O valor padrão é apenas uma sugestão e pode ser alterado livremente.</small></div>
+          <div className="finance-form-grid">
+            <StandardPriceField kind="exam" names={(examForm.exam_type_ids||[]).map(id=>examTypes.find(x=>x.id===id)?.name)} value={examForm.price_preset_key} onApply={preset=>setExamForm({...examForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):examForm.total_amount,payment_origin:preset?.origin||examForm.payment_origin})}/>
+            <Field label="Origem do pagamento"><Select value={examForm.payment_origin} setValue={v=>setExamForm({...examForm,payment_origin:v})} options={['Particular','Convênio','SUS']}/></Field>
+            <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value})}/></Field>
+            <Field label="Valor já recebido (R$)"><input type="number" min="0" step="0.01" value={examForm.received_amount} onChange={e=>setExamForm({...examForm,received_amount:e.target.value})}/></Field>
+            <Field label="Saldo a receber"><input readOnly value={moneyBR(Math.max(numericValue(examForm.total_amount)-numericValue(examForm.received_amount),0))}/></Field>
+            <Field label="Forma de pagamento"><Select value={examForm.payment_method} setValue={v=>setExamForm({...examForm,payment_method:v})} options={['PIX','Dinheiro','Débito','Crédito','Boleto','Transferência','Convênio','SUS']} first="Selecione"/></Field>
+            <Field label="Parcelas"><Select value={String(examForm.installments||1)} setValue={v=>setExamForm({...examForm,installments:v})} options={Array.from({length:12},(_,i)=>String(i+1))}/></Field>
+            <Field label="Status financeiro"><Select value={examForm.financial_status} setValue={v=>setExamForm({...examForm,financial_status:v})} options={['Não definido','Pendente','Parcial','Recebido','Faturado ao convênio','Aguardando convênio','Glosado']}/></Field>
+            <Field label="Previsão de recebimento"><input type="date" value={examForm.expected_receipt_date} onChange={e=>setExamForm({...examForm,expected_receipt_date:e.target.value})}/></Field>
+            <Field label="Data do recebimento"><input type="date" value={examForm.received_date} onChange={e=>setExamForm({...examForm,received_date:e.target.value})}/></Field>
+            {examForm.payment_origin==='Convênio'&&<><Field label="Valor faturado ao convênio"><input type="number" min="0" step="0.01" value={examForm.billed_amount} onChange={e=>setExamForm({...examForm,billed_amount:e.target.value})}/></Field><Field label="Competência"><input type="month" value={examForm.billing_competence} onChange={e=>setExamForm({...examForm,billing_competence:e.target.value})}/></Field><Field label="Data de faturamento"><input type="date" value={examForm.billing_date} onChange={e=>setExamForm({...examForm,billing_date:e.target.value})}/></Field></>}
+            <Field label="Observação financeira" full><textarea rows="3" value={examForm.financial_notes} onChange={e=>setExamForm({...examForm,financial_notes:e.target.value})}/></Field>
+          </div>
+        </div>
         <Field label="Observação" full><textarea value={examForm.obs} onChange={e=>setExamForm({...examForm,obs:e.target.value})} rows="4"/></Field>
       </div>
     </Modal>
@@ -5772,6 +6329,35 @@ function App(){
         <Field label="Horário de chegada"><input type="time" value={sForm.arrival} onChange={e=>setSForm({...sForm,arrival:e.target.value})}/></Field>
         <Field label="Horário da cirurgia"><input type="time" value={sForm.time} onChange={e=>setSForm({...sForm,time:e.target.value})}/></Field>
         <Field label="Pagamento"><Select value={sForm.payment} setValue={v=>setSForm({...sForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
+        <div className="finance-form-section full">
+          <div className="finance-form-title"><span>FINANCEIRO</span><b>Dados de faturamento e recebimento</b><small>O valor da cirurgia representa o pacote principal uma única vez.</small></div>
+          <div className="finance-form-grid">
+            <StandardPriceField kind="surgery" names={surgeryTypes.find(x=>x.id===sForm.surgery_type_id)?.name||''} value={sForm.price_preset_key} onApply={preset=>setSForm({...sForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):sForm.total_amount,payment_origin:preset?.origin||sForm.payment_origin})}/>
+            <Field label="Origem do pagamento"><Select value={sForm.payment_origin} setValue={v=>setSForm({...sForm,payment_origin:v})} options={['Particular','Convênio']}/></Field>
+            <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value})} placeholder="0,00"/></Field>
+            <Field label="Valor já recebido (R$)"><input type="number" min="0" step="0.01" value={sForm.received_amount} onChange={e=>setSForm({...sForm,received_amount:e.target.value})}/></Field>
+            <Field label="Saldo a receber"><input readOnly value={moneyBR(Math.max(numericValue(sForm.total_amount)-numericValue(sForm.received_amount),0))}/></Field>
+            <Field label="Forma de pagamento"><Select value={sForm.payment_method} setValue={v=>setSForm({...sForm,payment_method:v})} options={['PIX','Dinheiro','Débito','Crédito','Boleto','Transferência','Convênio']} first="Selecione"/></Field>
+            <Field label="Parcelas"><Select value={String(sForm.installments||1)} setValue={v=>setSForm({...sForm,installments:v})} options={Array.from({length:12},(_,i)=>String(i+1))}/></Field>
+            <Field label="Status financeiro"><Select value={sForm.financial_status} setValue={v=>setSForm({...sForm,financial_status:v})} options={['Não definido','Pendente','Parcial','Recebido','Faturado ao convênio','Aguardando convênio','Glosado']}/></Field>
+            <Field label="Previsão de recebimento"><input type="date" value={sForm.expected_receipt_date} onChange={e=>setSForm({...sForm,expected_receipt_date:e.target.value})}/></Field>
+            <Field label="Data do recebimento"><input type="date" value={sForm.received_date} onChange={e=>setSForm({...sForm,received_date:e.target.value})}/></Field>
+            {sForm.payment_origin==='Convênio'&&<>
+              <Field label="Valor faturado ao convênio"><input type="number" min="0" step="0.01" value={sForm.billed_amount} onChange={e=>setSForm({...sForm,billed_amount:e.target.value})}/></Field>
+              <Field label="Competência"><input type="month" value={sForm.billing_competence} onChange={e=>setSForm({...sForm,billing_competence:e.target.value})}/></Field>
+              <Field label="Data de faturamento"><input type="date" value={sForm.billing_date} onChange={e=>setSForm({...sForm,billing_date:e.target.value})}/></Field>
+            </>}
+            <Field label="Observação financeira" full><textarea rows="3" value={sForm.financial_notes} onChange={e=>setSForm({...sForm,financial_notes:e.target.value})}/></Field>
+          </div>
+          {sForm.procedure_ids?.length>0&&<div className="package-finance-box">
+            <div className="package-finance-head"><b>Procedimentos do pacote</b><span>Marque se está incluído no valor total acima. Se for cobrado à parte, informe o adicional.</span></div>
+            {sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};return <div className="package-finance-row" key={id}>
+              <span>{proc?.name||'Procedimento'}</span>
+              <label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked}}})}/><b>Incluído no pacote</b></label>
+              {cfg.included===false?<input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>:<span className="package-included-label">Sem valor adicional</span>}
+            </div>})}
+          </div>}
+        </div>
         <Field label="Observações" full><textarea value={sForm.obs} onChange={e=>setSForm({...sForm,obs:e.target.value})} rows="5"/></Field>
       </div>
     </Modal>
@@ -5816,9 +6402,60 @@ function App(){
         <Field label="Lançado por"><Select value={pForm.launcher||currentLaunchName||''} setValue={v=>setPForm({...pForm,launcher:v})} options={launcherOptionsAll} first="Selecione quem lançou"/></Field>
         <Field label="Horário"><input type="time" value={pForm.time} onChange={e=>setPForm({...pForm,time:e.target.value})}/></Field>
         <Field label="Pagamento"><Select value={pForm.payment} setValue={v=>setPForm({...pForm,payment:v})} options={['Não informado','Pendente','20% pago','Pago','Convênio']}/></Field>
+        <div className="finance-form-section full">
+          <div className="finance-form-title"><span>FINANCEIRO</span><b>Dados do lançamento</b><small>Mesmo com vários procedimentos no lançamento, o valor financeiro é considerado uma única vez.</small></div>
+          <div className="finance-form-grid">
+            <StandardPriceField kind="procedure" names={(pForm.procedure_ids||[]).map(id=>procedureOptions.find(x=>x.id===id)?.name)} value={pForm.price_preset_key} onApply={preset=>setPForm({...pForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):pForm.total_amount,payment_origin:preset?.origin||pForm.payment_origin})}/>
+            <Field label="Origem do pagamento"><Select value={pForm.payment_origin} setValue={v=>setPForm({...pForm,payment_origin:v})} options={['Particular','Convênio']}/></Field>
+            <Field label="Valor total do lançamento (R$)"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value})}/></Field>
+            <Field label="Valor já recebido (R$)"><input type="number" min="0" step="0.01" value={pForm.received_amount} onChange={e=>setPForm({...pForm,received_amount:e.target.value})}/></Field>
+            <Field label="Saldo a receber"><input readOnly value={moneyBR(Math.max(numericValue(pForm.total_amount)-numericValue(pForm.received_amount),0))}/></Field>
+            <Field label="Forma de pagamento"><Select value={pForm.payment_method} setValue={v=>setPForm({...pForm,payment_method:v})} options={['PIX','Dinheiro','Débito','Crédito','Boleto','Transferência','Convênio']} first="Selecione"/></Field>
+            <Field label="Parcelas"><Select value={String(pForm.installments||1)} setValue={v=>setPForm({...pForm,installments:v})} options={Array.from({length:12},(_,i)=>String(i+1))}/></Field>
+            <Field label="Status financeiro"><Select value={pForm.financial_status} setValue={v=>setPForm({...pForm,financial_status:v})} options={['Não definido','Pendente','Parcial','Recebido','Faturado ao convênio','Aguardando convênio','Glosado']}/></Field>
+            <Field label="Previsão de recebimento"><input type="date" value={pForm.expected_receipt_date} onChange={e=>setPForm({...pForm,expected_receipt_date:e.target.value})}/></Field>
+            <Field label="Data do recebimento"><input type="date" value={pForm.received_date} onChange={e=>setPForm({...pForm,received_date:e.target.value})}/></Field>
+            {pForm.payment_origin==='Convênio'&&<>
+              <Field label="Valor faturado ao convênio"><input type="number" min="0" step="0.01" value={pForm.billed_amount} onChange={e=>setPForm({...pForm,billed_amount:e.target.value})}/></Field>
+              <Field label="Competência"><input type="month" value={pForm.billing_competence} onChange={e=>setPForm({...pForm,billing_competence:e.target.value})}/></Field>
+              <Field label="Data de faturamento"><input type="date" value={pForm.billing_date} onChange={e=>setPForm({...pForm,billing_date:e.target.value})}/></Field>
+            </>}
+            <Field label="Observação financeira" full><textarea rows="3" value={pForm.financial_notes} onChange={e=>setPForm({...pForm,financial_notes:e.target.value})}/></Field>
+          </div>
+        </div>
         <Field label="Observações" full><textarea value={pForm.obs} onChange={e=>setPForm({...pForm,obs:e.target.value})} rows="5"/></Field>
       </div>
     </Modal>
+
+    <style>{`
+      .standard-price-field{grid-column:span 2;padding:12px;border:1px solid #dce8ec;border-radius:12px;background:#f8fbfc}
+      .standard-price-field label{color:var(--primary);font-weight:900}
+      .standard-price-field small{display:block;margin-top:7px;color:var(--muted);font-size:10.5px;line-height:1.4}
+      .finance-page{max-width:1550px}
+      .finance-filter-card{margin-bottom:18px}
+      .finance-filters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+      .finance-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+      .finance-kpi{min-height:126px;padding:20px;border:1px solid var(--border);border-radius:17px;background:#fff;box-shadow:var(--shadow-sm);position:relative;overflow:hidden}
+      .finance-kpi::after{content:"";position:absolute;width:90px;height:90px;right:-30px;top:-28px;border-radius:50%;background:var(--primary-soft);opacity:.7}
+      .finance-kpi span,.finance-kpi small,.finance-kpi strong{position:relative;z-index:1;display:block}
+      .finance-kpi span{color:var(--muted);font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.055em}
+      .finance-kpi strong{margin:10px 0 7px;color:var(--primary);font-size:28px;letter-spacing:-.04em}
+      .finance-kpi small{color:var(--muted);font-size:11px}
+      .finance-kpi.success strong{color:var(--green)} .finance-kpi.success::after{background:var(--green-soft)}
+      .finance-kpi.warning strong{color:var(--yellow)} .finance-kpi.warning::after{background:var(--yellow-soft)}
+      .finance-main-grid{display:grid;grid-template-columns:minmax(0,2.1fr) minmax(280px,.9fr);gap:15px;margin-bottom:15px}
+      .finance-line-card{padding:20px;min-height:390px}.finance-line-svg{width:100%;height:auto;margin-top:8px}.finance-axis{fill:#74838c;font-size:10px}
+      .finance-chart-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.finance-chart-head span{display:block;color:var(--primary-2);font-size:9px;font-weight:900;letter-spacing:.1em}.finance-chart-head h3{margin:5px 0 3px;font-size:17px;color:var(--text)}.finance-chart-head p{margin:0;color:var(--muted);font-size:11px}
+      .finance-line-legend{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end}.finance-line-legend span{display:flex;align-items:center;gap:6px;color:#667880;font-size:10px;letter-spacing:0}.finance-line-legend i{width:18px;height:4px;border-radius:999px}
+      .finance-side-summary{padding:20px}.finance-summary-list{display:grid;gap:10px;margin-top:18px}.finance-summary-list>div{padding:14px;border:1px solid var(--border);border-radius:12px;background:#fafcfd}.finance-summary-list span{display:block;color:var(--muted);font-size:10px}.finance-summary-list b{display:block;margin-top:5px;color:var(--primary);font-size:20px}
+      .finance-analysis-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-bottom:18px}.finance-ranking-card{min-height:330px;padding:20px}.finance-ranking-list{display:grid;gap:14px;margin-top:20px}.finance-ranking-row{display:grid;grid-template-columns:minmax(125px,180px) 1fr minmax(95px,125px);gap:10px;align-items:center}.finance-ranking-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#52646f;font-size:11px}.finance-ranking-track{height:9px;background:#edf1f3;border-radius:999px;overflow:hidden}.finance-ranking-track i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--primary),#78a5b1)}.finance-ranking-row b{color:var(--primary);font-size:11px;text-align:right}
+      .finance-detail-card{margin-top:18px}.finance-detail-subtitle{margin:4px 0 0;color:var(--muted);font-size:12px}.finance-table{min-width:1450px}.money-cell{font-weight:800;color:var(--primary)}.money-cell.received{color:var(--green)}.money-cell.pending{color:var(--yellow)}
+      .finance-status{display:inline-flex;padding:6px 9px;border-radius:999px;font-size:9px;font-weight:850;background:#f1f4f5;color:#65757d;white-space:nowrap}.finance-status.finance-recebido{background:var(--green-soft);color:var(--green)}.finance-status.finance-parcial,.finance-status.finance-pendente,.finance-status.finance-aguardando-convênio{background:var(--yellow-soft);color:var(--yellow)}.finance-status.finance-glosado{background:var(--red-soft);color:var(--red)}.finance-status.finance-faturado-ao-convênio{background:var(--primary-soft);color:var(--primary)}
+      .finance-form-section{padding:18px;margin-top:4px;border:1px solid #dbe7eb;border-radius:14px;background:linear-gradient(135deg,#fbfdfe,#f3f8f9)}.finance-form-title{margin-bottom:14px}.finance-form-title span{display:block;color:var(--primary-2);font-size:9px;font-weight:900;letter-spacing:.12em}.finance-form-title b{display:block;margin-top:4px;color:var(--text);font-size:16px}.finance-form-title small{display:block;margin-top:4px;color:var(--muted);font-size:11px}.finance-form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.finance-form-grid>.full{grid-column:1/-1}
+      .package-finance-box{margin-top:16px;padding-top:15px;border-top:1px solid #dfeaec}.package-finance-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:9px}.package-finance-head b{font-size:12px;color:var(--text)}.package-finance-head span{font-size:10px;color:var(--muted)}.package-finance-row{display:grid;grid-template-columns:minmax(180px,1fr) 180px 180px;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #e8eef0}.package-finance-row:last-child{border-bottom:0}.package-finance-row>span:first-child{font-size:11px;font-weight:750;color:#455963}.package-check{display:flex;align-items:center;gap:7px;margin:0;color:#526b5b}.package-check input{width:16px;min-height:16px}.package-check b{font-size:10px}.package-extra-input{min-height:38px}.package-included-label{font-size:10px!important;color:var(--green)!important}
+      @media(max-width:1150px){.finance-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.finance-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.finance-main-grid{grid-template-columns:1fr}.finance-form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:800px){.finance-filters,.finance-kpis,.finance-analysis-grid,.finance-form-grid{grid-template-columns:1fr}.package-finance-row{grid-template-columns:1fr}.finance-ranking-row{grid-template-columns:minmax(100px,150px) 1fr}.finance-ranking-row b{grid-column:2;text-align:left}.finance-line-legend{justify-content:flex-start}}
+    `}</style>
 
     <style>{`
       .followup-metrics-card{padding:20px}
