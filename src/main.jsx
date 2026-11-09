@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import ExcelJS from 'exceljs';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { Activity, BarChart3, CalendarDays, ChevronRight, CircleHelp, ClipboardList, Download, Eye, FileDown, FileText, LayoutDashboard, ListChecks, LogOut, Plus, RefreshCw, Settings, Stethoscope, Trash2, Upload, WalletCards } from 'lucide-react';
 import { supabase } from './supabase';
 import './styles.css';
 
@@ -344,6 +345,7 @@ const groupLaunchRows = (rows, kind) => {
           db_ids:[],
           patient_id:r.patients?.id||'',
           date:r.exam_date,
+          realization_date:r.realization_date||'',
           patient:r.patients?.full_name||'',
           whatsapp:r.patients?.whatsapp||'',
           patient_birth_date:r.patients?.birth_date||'',
@@ -448,6 +450,7 @@ const mapProcedureRows = (rows, surgeryById=new Map(), surgeryByGroup=new Map())
     group_id:r.launch_group_id||r.id,
     patient_id:r.patients?.id||'',
     date:r.procedure_date,
+    realization_date:r.realization_date||'',
     patient:r.patients?.full_name||'',
     whatsapp:r.patients?.whatsapp||'',
     patient_birth_date:r.patients?.birth_date||'',
@@ -821,10 +824,10 @@ function PaymentBreakdownEditor({form,setForm,insurances}){
       <Field label="Valor (R$)"><input type="number" min="0" step="0.01" value={row.amount||''} onChange={e=>setRow(index,{amount:e.target.value})}/></Field>
       <Field label="Forma"><Select value={row.method||''} setValue={v=>setRow(index,{method:v})} options={['PIX','Dinheiro','Débito','Crédito','Crédito parcelado','Boleto','Transferência','Promissória','Convênio']} first="Selecione"/></Field>
       <Field label="Parcelas"><Select value={String(row.installments||1)} setValue={v=>setRow(index,{installments:v})} options={Array.from({length:12},(_,i)=>String(i+1))}/></Field>
-      <Field label="Situação"><Select value={row.status||'Pendente'} setValue={v=>setRow(index,{status:v,received_date:v==='Recebido'?(row.received_date||todayISO()):''})} options={['Pendente','Recebido']}/></Field>
+      <Field label="Pagamento"><Select value={row.status==='Recebido'?'Pago':'Não pago'} setValue={v=>setRow(index,{status:v==='Pago'?'Recebido':'Pendente',received_date:v==='Pago'?(row.received_date||todayISO()):''})} options={['Pago','Não pago']}/></Field>
       {row.status==='Recebido'
-        ? <Field label="Data do recebimento"><input type="date" value={row.received_date||''} onChange={e=>setRow(index,{received_date:e.target.value,status:'Recebido'})}/></Field>
-        : <Field label="Previsão / vencimento"><input type="date" value={row.expected_date||''} onChange={e=>setRow(index,{expected_date:e.target.value})}/></Field>}
+        ? <Field label="Data do pagamento"><input type="date" value={row.received_date||''} onChange={e=>setRow(index,{received_date:e.target.value,status:'Recebido'})}/></Field>
+        : <Field label="Previsão / vencimento"><input type="date" value={row.expected_date||''} onChange={e=>setRow(index,{expected_date:e.target.value,status:'Pendente'})}/></Field>}
       <button type="button" className="btn btn-danger-soft payment-row-remove" onClick={()=>removeRow(index)}>Remover</button>
     </div>)}</div>:<div className="payment-breakdown-empty">Nenhum pagamento lançado. Clique em “Adicionar pagamento”.</div>}
   </div>;
@@ -848,19 +851,101 @@ function RepassesEditor({form,setForm}){
   </div>;
 }
 
-function FinanceQuickSummary({form}){
+function FinanceQuickSummary({form,setForm}){
   const net=Math.max(numericValue(form.total_amount)-numericValue(form.discount_amount),0);
   const received=numericValue(form.received_amount);
+  const status=String(form.financial_status||'').toLowerCase();
+  const tone=status.includes('parcial')
+    ? 'partial'
+    : ((net>0&&received>=net)||status==='recebido')
+      ? 'paid'
+      : 'unpaid';
+  const paymentValue=tone==='paid'?'Pago':tone==='partial'?'Pago parcial':'Não pago';
   const balance=Math.max(net-received,0);
-  const tone=net>0&&received>=net?'paid':received>0?'partial':'unpaid';
-  const label=tone==='paid'?'Quitado':tone==='partial'?'Parcial':'Não pago';
+
+  const changePayment=value=>{
+    if(!setForm) return;
+    if(value==='Pago'){
+      setForm({
+        ...form,
+        financial_status:'Recebido',
+        received_amount:String(net||''),
+        received_date:form.received_date||todayISO()
+      });
+      return;
+    }
+    if(value==='Pago parcial'){
+      const current=received>0&&received<net?received:0;
+      setForm({
+        ...form,
+        financial_status:'Parcial',
+        received_amount:String(current||''),
+        received_date:form.received_date||todayISO()
+      });
+      return;
+    }
+    setForm({
+      ...form,
+      financial_status:'Pendente',
+      received_amount:'',
+      received_date:''
+    });
+  };
+
   return <div className="finance-quick-summary full">
     <div><span>Valor líquido</span><b>{moneyBR(net)}</b></div>
     <div><span>Recebido</span><b>{moneyBR(received)}</b></div>
     <div><span>Saldo</span><b>{moneyBR(balance)}</b></div>
-    <div className={`finance-summary-status ${tone}`}><span>Status</span><b><i/> {label}</b></div>
+    <div className={`finance-summary-status ${tone}`}>
+      <span>Pagamento</span>
+      <div className="finance-summary-payment-select">
+        <i/>
+        <select value={paymentValue} onChange={e=>changePayment(e.target.value)} aria-label="Pagamento">
+          <option>Pago</option>
+          <option>Pago parcial</option>
+          <option>Não pago</option>
+        </select>
+      </div>
+    </div>
   </div>;
 }
+
+
+const V36PaymentSummaryStyle = () => <style>{`
+  .finance-summary-payment-select{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-top:4px;
+  }
+  .finance-summary-payment-select>i{
+    width:10px;
+    height:10px;
+    border-radius:999px;
+    background:currentColor;
+    flex:0 0 auto;
+  }
+  .finance-summary-payment-select select{
+    width:100%;
+    min-width:132px;
+    border:1px solid rgba(49,95,114,.18);
+    border-radius:10px;
+    background:#fff;
+    color:#20313b;
+    font:inherit;
+    font-weight:700;
+    padding:7px 30px 7px 10px;
+    cursor:pointer;
+    outline:none;
+  }
+  .finance-summary-status.paid .finance-summary-payment-select{color:#4f8a6b}
+  .finance-summary-status.partial .finance-summary-payment-select{color:#b9802b}
+  .finance-summary-status.unpaid .finance-summary-payment-select{color:#b85c5c}
+  .finance-summary-payment-select select:focus{
+    border-color:#4d8191;
+    box-shadow:0 0 0 3px rgba(77,129,145,.12);
+  }
+`}</style>;
 
 function Modal({open,onClose,title,subtitle,children,onSave,saveText}){
   if(!open) return null;
@@ -1000,16 +1085,16 @@ function FinancialDocumentsField({form,setForm,onOpen,onDownload}){
   return <div className="financial-documents full">
     <div className="documents-upload-zone">
       <div><b>Nota fiscal / comprovantes</b><small>Você pode anexar vários arquivos: PDF, PNG, JPG/JPEG ou WEBP.</small></div>
-      <label className="btn btn-light document-picker">+ Selecionar arquivos<input type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp" onChange={addFiles}/></label>
+      <label className="btn btn-light document-picker"><Upload size={15}/> Selecionar arquivos<input type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp" onChange={addFiles}/></label>
     </div>
     {(saved.length||pending.length)?<div className="documents-list">
       {saved.map(doc=><div className="document-chip saved" key={doc.path}>
         <div className="document-icon">✓</div><div className="document-meta"><b>{doc.name||'Documento anexado'}</b><small>{formatSize(doc.size)}{doc.type?` • ${doc.type.replace('application/','').replace('image/','').toUpperCase()}`:''}</small></div>
-        <div className="document-actions"><button type="button" className="btn btn-light" onClick={()=>onOpen(doc.path,doc.name)}>Visualizar</button><button type="button" className="btn btn-light" onClick={()=>onDownload?.(doc.path,doc.name)}>Baixar</button><button type="button" className="btn btn-danger-soft" onClick={()=>removeSaved(doc)}>Remover</button></div>
+        <div className="document-actions"><button type="button" className="btn btn-light" onClick={()=>onOpen(doc.path,doc.name)}><Eye size={14}/> Visualizar</button><button type="button" className="btn btn-light" onClick={()=>onDownload?.(doc.path,doc.name)}><Download size={14}/> Baixar</button><button type="button" className="btn btn-danger-soft" onClick={()=>removeSaved(doc)}><Trash2 size={14}/> Remover</button></div>
       </div>)}
       {pending.map((file,index)=><div className="document-chip pending" key={`${file.name}-${file.size}-${index}`}>
         <div className="document-icon">↑</div><div className="document-meta"><b>{file.name}</b><small>{formatSize(file.size)} • será enviado ao salvar</small></div>
-        <div className="document-actions"><button type="button" className="btn btn-danger-soft" onClick={()=>removePending(index)}>Remover</button></div>
+        <div className="document-actions"><button type="button" className="btn btn-danger-soft" onClick={()=>removePending(index)}><Trash2 size={14}/> Remover</button></div>
       </div>)}
     </div>:<div className="documents-empty">Nenhum documento anexado.</div>}
   </div>;
@@ -1321,14 +1406,14 @@ function App(){
     invoice_number:'',invoice_issued_date:'',invoice_file_path:'',invoice_file:null,financial_documents:[],pending_documents:[],removed_document_paths:[],repasses:[]
   });
   const [examForm,setExamForm] = useState({
-    date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
+    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [sForm,setSForm] = useState({
     date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [pForm,setPForm] = useState({
-    date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
+    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
     insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [followupForm,setFollowupForm] = useState({
@@ -1386,7 +1471,7 @@ function App(){
       supabase.from('insurances').select('*').eq('active',true).order('name'),
       supabase.from('profiles').select('id,full_name,role,active').eq('active',true).order('full_name'),
       supabase.from('exams').select(`
-        id,launch_group_id,exam_date,status,observation,launched_by,launched_by_name,insurance_id,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
+        id,launch_group_id,exam_date,realization_date,status,observation,launched_by,launched_by_name,insurance_id,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
         patients(id,full_name,whatsapp,birth_date),
         doctors:doctors!exams_doctor_id_fkey(id,name),
         indicated_by:doctors!exams_indicated_by_doctor_id_fkey(id,name),
@@ -1403,7 +1488,7 @@ function App(){
         insurances(id,name)
       `).order('surgery_date',{ascending:false}),
       supabase.from('procedure_records').select(`
-        id,launch_group_id,procedure_date,status,procedure_time,payment_status,observation,launched_by,launched_by_name,surgery_id,surgery_group_id,legacy_surgery_id,record_kind,procedure_id,eye,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,included_in_package,additional_amount,
+        id,launch_group_id,procedure_date,realization_date,status,procedure_time,payment_status,observation,launched_by,launched_by_name,surgery_id,surgery_group_id,legacy_surgery_id,record_kind,procedure_id,eye,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,included_in_package,additional_amount,
         patients(id,full_name,whatsapp,birth_date),
         doctors:doctors!procedure_records_doctor_id_fkey(id,name),
         indicated_by:doctors!procedure_records_indicated_by_doctor_id_fkey(id,name),
@@ -1643,7 +1728,7 @@ function App(){
       const launch_group_id=crypto.randomUUID();
       const rows=examForm.exam_type_ids.map(examTypeId=>({
         launch_group_id,
-        exam_date:examForm.date, patient_id, doctor_id:examForm.doctor_id,
+        exam_date:examForm.date, realization_date:examForm.realization_date||null, patient_id, doctor_id:examForm.doctor_id,
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId, status:examForm.status,
         insurance_id:examForm.insurance_id||null,
@@ -1659,7 +1744,7 @@ function App(){
       if(error) throw error;
       if(examSaved?.length){ const docs=await syncFinancialDocuments(examForm,'exam',launch_group_id); await supabase.from('exams').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setExamModal(false);
-      setExamForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
@@ -1783,6 +1868,7 @@ function App(){
     setEditingExamId(r.id);
     setExamForm({
       date:r.date,
+      realization_date:r.realization_date||'',
       patient:r.patient,
       patient_birth_date:r.patient_birth_date||'',
       whatsapp:r.whatsapp || '',
@@ -1831,6 +1917,7 @@ function App(){
     setEditingProcedureId(r.group_key||r.id);
     setPForm({
       date:r.date,
+      realization_date:r.realization_date||'',
       patient:r.patient,
       patient_birth_date:r.patient_birth_date||'',
       whatsapp:r.whatsapp||'',
@@ -1879,6 +1966,7 @@ function App(){
       const rows=examForm.exam_type_ids.map(examTypeId=>({
         launch_group_id:original.group_id,
         exam_date:examForm.date,
+        realization_date:examForm.realization_date||null,
         patient_id:original.patient_id,
         doctor_id:examForm.doctor_id,
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
@@ -1900,7 +1988,7 @@ function App(){
 
       setExamModal(false);
       setEditingExamId(null);
-      setExamForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -1999,6 +2087,7 @@ function App(){
       const rows=pForm.procedure_ids.map(procedureId=>({
         launch_group_id,
         procedure_date:pForm.date,
+        realization_date:pForm.realization_date||null,
         patient_id,
         doctor_id:pForm.doctor_id,
         indicated_by_doctor_id:pForm.indicated_by_doctor_id||null,
@@ -2034,7 +2123,7 @@ function App(){
       if(error) throw error;
       if(procedureSaved?.length){ const docs=await syncFinancialDocuments(pForm,'procedure',launch_group_id); await supabase.from('procedure_records').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setProcedureModal(false);
-      setPForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2060,6 +2149,7 @@ function App(){
       const rows=pForm.procedure_ids.map(procedureId=>({
         launch_group_id,
         procedure_date:pForm.date,
+        realization_date:pForm.realization_date||null,
         patient_id:original.patient_id,
         doctor_id:pForm.doctor_id,
         indicated_by_doctor_id:pForm.indicated_by_doctor_id||null,
@@ -2102,7 +2192,7 @@ function App(){
 
       setProcedureModal(false);
       setEditingProcedureId(null);
-      setPForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2114,7 +2204,7 @@ function App(){
   const closeExamModal = ()=>{
     setExamModal(false);
     setEditingExamId(null);
-    setExamForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+    setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
   };
 
   const closeSurgeryModal = ()=>{
@@ -2126,7 +2216,7 @@ function App(){
   const closeProcedureModal = ()=>{
     setProcedureModal(false);
     setEditingProcedureId(null);
-    setPForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+    setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
   };
 
   const delExam = async id=>{
@@ -2414,7 +2504,7 @@ function App(){
         const status=String(r.status||'').toLowerCase();
         const realized=status.includes('realiz');
         const canceled=status.includes('cancel');
-        const realizationDate=r.report_source==='surgery'?(r.scheduled_on||r.date):r.date;
+        const realizationDate=r.report_source==='surgery'?(r.scheduled_on||r.date):(r.realization_date||r.date);
         if(dailyStage==='realizado') return realized && (!dailyDate||realizationDate===dailyDate);
         if(dailyStage==='lancado') return !realized && !canceled && (!dailyDate||r.date===dailyDate);
         return !dailyDate || r.date===dailyDate || (realized&&realizationDate===dailyDate);
@@ -2514,7 +2604,8 @@ function App(){
         y+=12;
         addLine('Paciente:',`${r.patient||'—'}${r.patient_birth_date?` • Nasc. ${brDate(r.patient_birth_date)}`:''}`);
         addLine('Agendamento:',brDate(r.date));
-        if(r.report_source==='surgery'&&r.scheduled_on) addLine('Realização:',brDate(r.scheduled_on));
+        const realizationDate=r.report_source==='surgery'?r.scheduled_on:r.realization_date;
+        if(realizationDate) addLine('Realização:',brDate(realizationDate));
         if(r.report_source==='surgery') addLine('LIO:',r.lio_description||'—');
         addLine('Convênio:',r.insurance||financeOrigin(r)||'Particular');
         addLine('Pagamentos:',payments);
@@ -2538,8 +2629,9 @@ function App(){
     try{
       const title=`Exames / Cirurgias / Procedimentos — ${brDate(dailyDate)} — ${weekdayLabel(dailyDate)}`;
       const rowsHtml=dailyReportRows.length ? dailyReportRows.map((r,index)=>{
-        const realization=r.report_source==='surgery'&&r.scheduled_on
-          ? `<p><b>DATA DA REALIZAÇÃO:</b> ${escapeWordHtml(brDate(r.scheduled_on))}</p>`:'';
+        const realizationDate=r.report_source==='surgery'?r.scheduled_on:r.realization_date;
+        const realization=realizationDate
+          ? `<p><b>DATA DA REALIZAÇÃO:</b> ${escapeWordHtml(brDate(realizationDate))}</p>`:'';
         const lio=r.report_source==='surgery'
           ? `<p><b>LIO:</b> ${escapeWordHtml(r.lio_description||'—')}</p>`:'';
         const docs=(r.financial_documents?.length||r.invoice_file_path)
@@ -5176,25 +5268,25 @@ function App(){
         </select>}
       </div>
       <div className="nav">
-        <button className={page==='exames'?'active':''} onClick={()=>setPage('exames')}><span className="nav-symbol">E</span> <span>Exames</span></button>
-        <button className={page==='cirurgias'?'active':''} onClick={()=>setPage('cirurgias')}><span className="nav-symbol">C</span> <span>Cirurgias</span></button>
-        <button className={page==='procedimentos'?'active':''} onClick={()=>setPage('procedimentos')}><span className="nav-symbol">P</span> <span>Procedimentos</span></button>
-        <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}><span className="nav-symbol">↻</span> <span>Follow-up</span></button>
-        <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}><span className="nav-symbol">▥</span> <span>Resultados</span></button>
+        <button className={page==='exames'?'active':''} onClick={()=>setPage('exames')}><Stethoscope className="nav-icon" size={18}/><span>Exames</span></button>
+        <button className={page==='cirurgias'?'active':''} onClick={()=>setPage('cirurgias')}><Activity className="nav-icon" size={18}/><span>Cirurgias</span></button>
+        <button className={page==='procedimentos'?'active':''} onClick={()=>setPage('procedimentos')}><ClipboardList className="nav-icon" size={18}/><span>Procedimentos</span></button>
+        <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}><RefreshCw className="nav-icon" size={18}/><span>Follow-up</span></button>
+        <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}><BarChart3 className="nav-icon" size={18}/><span>Resultados</span></button>
         <div className={`nav-finance-group ${['financeiro','relatorio-diario','tarefas-pops'].includes(page)?'open active':''}`}>
           <button className={['financeiro','relatorio-diario','tarefas-pops'].includes(page)?'active':''} onClick={()=>setPage('financeiro')} aria-haspopup="true">
-            <span className="nav-finance-main"><span className="nav-symbol">R$</span><span>Financeiro</span></span><span className="nav-chevron">›</span>
+            <span className="nav-finance-main"><WalletCards className="nav-icon" size={18}/><span>Financeiro</span></span><ChevronRight className="nav-chevron-icon" size={17}/>
           </button>
           <div className="nav-finance-submenu">
-            <button className={page==='financeiro'?'active':''} onClick={()=>setPage('financeiro')}><span>▦</span><span>Visão geral</span></button>
-            <button className={page==='relatorio-diario'?'active':''} onClick={()=>setPage('relatorio-diario')}><span className="nav-symbol">◷</span><span>Relatório diário</span></button>
-            <button className={page==='tarefas-pops'?'active':''} onClick={()=>setPage('tarefas-pops')}><span className="nav-symbol">▦</span><span>Tarefas e POPs</span></button>
+            <button className={page==='financeiro'?'active':''} onClick={()=>setPage('financeiro')}><LayoutDashboard size={16}/><span>Visão geral</span></button>
+            <button className={page==='relatorio-diario'?'active':''} onClick={()=>setPage('relatorio-diario')}><CalendarDays size={16}/><span>Relatório diário</span></button>
+            <button className={page==='tarefas-pops'?'active':''} onClick={()=>setPage('tarefas-pops')}><ListChecks size={16}/><span>Tarefas e POPs</span></button>
           </div>
         </div>
-        <button className={page==='cadastros'?'active':''} onClick={()=>setPage('cadastros')}><span className="nav-symbol">⚙</span> <span>Cadastros</span></button>
-        <button className={page==='manual'?'active':''} onClick={()=>setPage('manual')}><span className="nav-symbol">?</span> <span>Manual</span></button>
+        <button className={page==='cadastros'?'active':''} onClick={()=>setPage('cadastros')}><Settings className="nav-icon" size={18}/><span>Cadastros</span></button>
+        <button className={page==='manual'?'active':''} onClick={()=>setPage('manual')}><CircleHelp className="nav-icon" size={18}/><span>Manual</span></button>
       </div>
-      <button className="btn btn-light logout-btn" onClick={logout}>Sair</button>
+      <button className="btn btn-light logout-btn" onClick={logout}><LogOut size={16}/> Sair</button>
     </aside>
 
     <main className="main">
@@ -5202,8 +5294,8 @@ function App(){
         <div className="topbar">
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
-            <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setExamModal(true)}}>+ Novo exame</button>
+            <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setExamModal(true)}}><Plus size={16}/> Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -5226,12 +5318,12 @@ function App(){
               disabled={!filteredExams.length}
               title="Excluir todos os lançamentos exibidos pelos filtros atuais"
             >
-              🗑 Excluir filtrados ({filteredExams.length})
+              <Trash2 size={15}/> Excluir filtrados ({filteredExams.length})
             </button>
           </div>
-          <div className="table-wrap"><table><thead><tr><th>Data</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Exame</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
+          <div className="table-wrap"><table><thead><tr><th>Agendado em</th><th>Realização</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Exame</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredExams.length?filteredExams.map(r=><tr key={r.id}>
-            <td>{brDate(r.date)}</td><td><PatientCell name={r.patient} phone={r.whatsapp} birthDate={r.patient_birth_date}/></td>
+            <td>{brDate(r.date)}</td><td>{r.realization_date?brDate(r.realization_date):<span className="muted">—</span>}</td><td><PatientCell name={r.patient} phone={r.whatsapp} birthDate={r.patient_birth_date}/></td>
             <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td>{r.exam}</td><td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><PaymentTrafficLight record={r} onClick={()=>openEditExam(r)}/></td>
             <td><ObservationCell text={r.obs}/></td><td>{launchedName(r)}</td>
@@ -5246,8 +5338,8 @@ function App(){
       {page==='cirurgias'&&<section>
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
-            <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}>+ Nova cirurgia</button>
+            <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}><Plus size={16}/> Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
@@ -5265,7 +5357,7 @@ function App(){
               disabled={!filteredSurgeries.length}
               title="Excluir todos os lançamentos exibidos pelos filtros atuais"
             >
-              🗑 Excluir filtrados ({filteredSurgeries.length})
+              <Trash2 size={15}/> Excluir filtrados ({filteredSurgeries.length})
             </button>
           </div>
           <div className="table-wrap"><table><thead><tr><th>Agendado em</th><th>Realização</th><th>Paciente</th><th>Cirurgião</th><th>Indicado por</th><th>Cirurgia</th><th>Procedimentos</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
@@ -5291,12 +5383,12 @@ function App(){
             <div className="subtitle">Área exclusiva para procedimentos. Itens vinculados a uma cirurgia aparecem aqui sem aumentar a quantidade de cirurgias.</div>
           </div>
           <div className="top-actions">
-            <button className="btn btn-light" onClick={()=>setPage('cadastros')}>⚙️ Cadastros</button>
+            <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
             <button className="btn btn-primary" onClick={()=>{
               setEditingProcedureId(null);
-              setPForm({date:todayISO(),patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+              setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
               setProcedureModal(true);
-            }}>+ Novo procedimento</button>
+            }}><Plus size={16}/> Novo procedimento</button>
           </div>
         </div>
 
@@ -5317,15 +5409,16 @@ function App(){
             <input className="patient-search-input" value={pSearch} onChange={e=>setPSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nos procedimentos"/>
             <button className="btn btn-light" onClick={()=>{setPMonth('');setPDoctor('');setPProcedure('');setPStatus('');setPSearch('')}}>Limpar</button>
             <button className="btn btn-danger-soft bulk-delete-btn" onClick={deleteFilteredProcedures} disabled={!filteredProcedures.length}>
-              🗑 Excluir filtrados ({filteredProcedures.length})
+              <Trash2 size={15}/> Excluir filtrados ({filteredProcedures.length})
             </button>
           </div>
 
           <div className="table-wrap"><table><thead><tr>
-            <th>Data</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Procedimento</th><th>Origem</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th>
+            <th>Agendado em</th><th>Realização</th><th>Paciente</th><th>Médico</th><th>Indicado por</th><th>Procedimento</th><th>Origem</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th>
           </tr></thead>
           <tbody>{filteredProcedureLaunches.length?filteredProcedureLaunches.map(r=><tr key={r.group_key||r.id}>
             <td>{brDate(r.date)}{r.time&&<><br/><small>{r.time}</small></>}</td>
+            <td>{r.realization_date?brDate(r.realization_date):<span className="muted">—</span>}</td>
             <td><PatientCell name={r.patient} phone={r.whatsapp} birthDate={r.patient_birth_date}/></td>
             <td>{r.doctor}</td>
             <td>{r.indicatedBy||<span className="muted">—</span>}</td>
@@ -5341,7 +5434,7 @@ function App(){
               <button className="btn btn-edit-soft" onClick={()=>openEditProcedure(r)}>Abrir procedimento</button>
               <button className="btn btn-danger-soft" onClick={()=>delProcedure(r)}>Excluir</button>
             </div></td>
-          </tr>):<tr><td colSpan="13" className="empty">Nenhum procedimento encontrado.</td></tr>}</tbody></table></div>
+          </tr>):<tr><td colSpan="14" className="empty">Nenhum procedimento encontrado.</td></tr>}</tbody></table></div>
         </div>
       </section>}
 
@@ -5450,8 +5543,8 @@ function App(){
           <div><div className="eyebrow">RELATÓRIO OPERACIONAL</div><h1>Relatório diário</h1><div className="subtitle">Conferência diária de exames, cirurgias e procedimentos, com situação operacional e financeira.</div></div>
           <div className="top-actions daily-export-actions">
             <button className="btn btn-light" onClick={()=>setPage('financeiro')}>← Financeiro</button>
-            <button className="btn btn-light" onClick={exportDailyReportWord}>📝 Exportar Word</button>
-            <button className="btn btn-primary" onClick={exportDailyReportPdf}>📄 Gerar PDF</button>
+            <button className="btn btn-light" onClick={exportDailyReportWord}><FileText size={16}/> Exportar Word</button>
+            <button className="btn btn-primary" onClick={exportDailyReportPdf}><FileDown size={16}/> Gerar PDF</button>
           </div>
         </div>
         <div className="card daily-report-toolbar">
@@ -5986,64 +6079,71 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">03</div>
             <h3>Lançar um exame</h3>
-            <p>Acesse <b>Exames → Novo exame</b>. Preencha data, paciente, médico, tipo de exame, status e observação. O WhatsApp é opcional e pode ser informado para facilitar o contato no Follow-up. Você pode selecionar vários exames no mesmo lançamento. Depois clique em <b>Salvar exame</b>.</p>
+            <p>Acesse <b>Exames → Novo exame</b>. Informe a <b>data do agendamento</b> e, quando definida, a <b>data da realização</b>. Preencha paciente, médico, tipo de exame, status e observação. No Financeiro, registre cada pagamento como <b>Pago</b> ou <b>Não pago</b>; o sistema calcula saldo e situação automaticamente. Depois clique em <b>Salvar exame</b>.</p>
             <div className="manual-note">Use o campo Observação para registrar informações importantes que a equipe precise consultar depois.</div>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">04</div>
             <h3>Lançar uma cirurgia</h3>
-            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe paciente, cirurgião e selecione a cirurgia. Depois, se fizer parte do pacote, vincule um ou vários procedimentos adicionais. A cirurgia contará uma única vez, independentemente da quantidade de procedimentos. Complete olho, convênio, status, horários, pagamento e observações.</p>
+            <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe a <b>data do agendamento</b> e a <b>data da realização</b>, paciente, cirurgião e cirurgia. Se fizer parte do pacote, vincule os procedimentos adicionais. No Financeiro, cada recebimento deve ser marcado como <b>Pago</b> ou <b>Não pago</b>; o sistema calcula recebido, saldo e situação automaticamente.</p>
             <div className="manual-note">Mantenha o status atualizado para que os indicadores mensais representem a situação real da cirurgia.</div>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">05</div>
+            <h3>Lançar um procedimento</h3>
+            <p>Acesse <b>Procedimentos → Novo procedimento</b>. Informe a <b>data do agendamento</b> e, quando definida, a <b>data da realização</b>, paciente, profissional, procedimento, convênio e status. No Financeiro, use <b>Pago</b> ou <b>Não pago</b> em cada pagamento. Procedimentos vinculados a uma cirurgia continuam identificados como parte do pacote.</p>
+            <div className="manual-note">A data da realização é independente da data em que o procedimento entrou na agenda.</div>
+          </article>
+
+          <article className="card manual-card">
+            <div className="manual-number">06</div>
             <h3>Editar informações</h3>
             <p>Na tabela de Exames ou Cirurgias, localize o registro e clique em <b>Editar</b>. O formulário abrirá com as informações atuais. Faça a alteração e clique em <b>Salvar alterações</b>.</p>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">06</div>
+            <div className="manual-number">07</div>
             <h3>Excluir um lançamento</h3>
             <p>Clique em <b>Excluir</b> na linha desejada. O sistema solicitará uma confirmação antes de remover o registro.</p>
             <div className="manual-warning">A exclusão é definitiva. Confira o paciente e o procedimento antes de confirmar.</div>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">07</div>
+            <div className="manual-number">08</div>
             <h3>Filtros</h3>
             <p>Use os filtros no topo das páginas para localizar informações por <b>mês, médico, exame ou procedimento</b>. Em Resultados também é possível filtrar por responsável e status.</p>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">08</div>
+            <div className="manual-number">09</div>
             <h3>Resultados</h3>
             <p>A página Resultados mostra pacientes únicos, volumes, taxas de realização, exames e cirurgias mais registrados, produção por médico e tipo, indicações por médico quando informadas, status, convênio e lançamentos por responsável.</p>
             <div className="manual-note">Os indicadores acompanham os filtros selecionados. Assim você pode analisar um mês, profissional, responsável ou status específico.</div>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">09</div>
+            <div className="manual-number">10</div>
             <h3>Exportar resultados</h3>
             <p>Na página Resultados, aplique os filtros desejados e clique em <b>PDF completo</b>. O relatório mostra resumo executivo, indicadores, situação dos exames e cirurgias, pendências, cancelamentos, situação financeira, comparação com o mês anterior, gráficos de linha, gráficos de pizza e o detalhamento de cada tipo de exame/procedimento dentro de cada status.</p>
             <p>O PDF é paginado automaticamente para que todos os exames e cirurgias filtrados apareçam com <b>paciente, médico/cirurgião, procedimento, status, responsável e observações</b>. A exportação em Excel continua disponível separadamente para conferência dos dados.</p>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">10</div>
+            <div className="manual-number">11</div>
             <h3>Cadastros da clínica</h3>
             <p>Tanto no acesso <b>ADM</b> quanto no acesso <b>Orientadora</b>, abra <b>Cadastros</b> no menu lateral. Nessa página é possível adicionar ou remover <b>médicos, exames, cirurgias e procedimentos</b>. Os novos itens passam a aparecer automaticamente nos formulários de lançamento.</p><div className="manual-note">Itens removidos deixam de aparecer para novos lançamentos, mas os registros antigos permanecem preservados.</div>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">11</div>
+            <div className="manual-number">12</div>
             <h3>WhatsApp do paciente</h3>
             <p>O WhatsApp é opcional ao lançar ou editar um exame/cirurgia. Quando informado, fica salvo no cadastro do paciente e pode ser usado no Follow-up. No Follow-up, o WhatsApp fica oculto na visão principal para manter a tela limpa. Ao clicar em <b>Registrar follow-up</b> ou <b>Atualizar follow-up</b>, o contato aparece junto com o botão <b>Enviar WhatsApp</b>, que abre a conversa com uma mensagem pronta alterando automaticamente o nome do paciente.</p>
           </article>
 
           <article className="card manual-card">
-            <div className="manual-number">12</div>
+            <div className="manual-number">13</div>
             <h3>Boas práticas</h3>
             <p>Confira os dados antes de salvar, mantenha os status atualizados, registre observações importantes e evite criar lançamentos duplicados.</p>
             <div className="manual-note">Ao finalizar o uso em um computador compartilhado, clique sempre em <b>Sair</b>.</div>
@@ -6054,9 +6154,9 @@ function App(){
           <h3>Fluxo recomendado no dia a dia</h3>
           <div className="manual-checklist">
             <span>✓ Selecione seu nome antes de começar</span>
-            <span>✓ Lance exames e cirurgias conforme forem agendados</span>
-            <span>✓ Atualize o status quando houver mudança</span>
-            <span>✓ Revise os Resultados no fechamento do mês</span>
+            <span>✓ Lance exames, cirurgias e procedimentos conforme forem agendados</span>
+            <span>✓ Informe a data da realização quando o atendimento acontecer</span>
+            <span>✓ Marque os pagamentos como Pago ou Não pago e revise os saldos</span>
             <span>✓ Exporte o Excel para conferência e análise</span>
           </div>
         </div>
@@ -6927,7 +7027,8 @@ function App(){
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO ATENDIMENTO</b><small>Informações clínicas e operacionais principais.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
+            <Field label="Data do agendamento"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
+            <Field label="Data da realização"><input type="date" value={examForm.realization_date||''} onChange={e=>setExamForm({...examForm,realization_date:e.target.value})}/></Field>
             <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
             <Field label="Data de nascimento"><input type="date" value={examForm.patient_birth_date||''} onChange={e=>setExamForm({...examForm,patient_birth_date:e.target.value})}/></Field>
             <Field label="Convênio"><Select value={examForm.insurance_id} setValue={v=>setExamForm({...examForm,insurance_id:v,payment_origin:v?'Convênio':'Particular'})} options={insurances} first="Particular / selecione"/></Field>
@@ -6950,7 +7051,7 @@ function App(){
             <Field label="Origem"><Select value={examForm.payment_origin} setValue={v=>setExamForm({...examForm,payment_origin:v})} options={['Particular','Convênio','Misto','SUS']}/></Field>
             <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value})}/></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={examForm.discount_amount||''} onChange={e=>setExamForm({...examForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={examForm}/>
+            <FinanceQuickSummary form={examForm} setForm={setExamForm}/>
             <PaymentBreakdownEditor form={examForm} setForm={setExamForm} insurances={insurances}/>
             <Field label="Nota fiscal / comprovante nº"><input value={examForm.invoice_number||''} onChange={e=>setExamForm({...examForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={examForm.invoice_issued_date||''} onChange={e=>setExamForm({...examForm,invoice_issued_date:e.target.value})}/></Field>
@@ -7151,7 +7252,7 @@ function App(){
             <Field label="Origem"><Select value={sForm.payment_origin} setValue={v=>setSForm({...sForm,payment_origin:v})} options={['Particular','Convênio','Misto']}/></Field>
             <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value})} placeholder="0,00"/></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={sForm.discount_amount||''} onChange={e=>setSForm({...sForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={sForm}/>
+            <FinanceQuickSummary form={sForm} setForm={setSForm}/>
             <PaymentBreakdownEditor form={sForm} setForm={setSForm} insurances={insurances}/>
             {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>:<span className="package-included-label">Sem valor adicional</span>}</div>})}</div>}
             <Field label="Nota fiscal / comprovante nº"><input value={sForm.invoice_number||''} onChange={e=>setSForm({...sForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
@@ -7178,7 +7279,8 @@ function App(){
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO PROCEDIMENTO</b><small>Informações principais para identificação e acompanhamento.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data"><input type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
+            <Field label="Data do agendamento"><input type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
+            <Field label="Data da realização"><input type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field>
             <Field label="Paciente"><input value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field>
             <Field label="Data de nascimento"><input type="date" value={pForm.patient_birth_date||''} onChange={e=>setPForm({...pForm,patient_birth_date:e.target.value})}/></Field>
             <Field label="Convênio"><Select value={pForm.insurance_id} setValue={v=>setPForm({...pForm,insurance_id:v,payment_origin:v?'Convênio':(pForm.payment_origin==='Misto'?'Misto':'Particular')})} options={insurances} first="Particular / selecione"/></Field>
@@ -7198,7 +7300,7 @@ function App(){
             <Field label="Origem"><Select value={pForm.payment_origin} setValue={v=>setPForm({...pForm,payment_origin:v})} options={['Particular','Convênio','Misto']}/></Field>
             <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value})}/></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={pForm.discount_amount||''} onChange={e=>setPForm({...pForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={pForm}/>
+            <FinanceQuickSummary form={pForm} setForm={setPForm}/>
             <PaymentBreakdownEditor form={pForm} setForm={setPForm} insurances={insurances}/>
             <Field label="Nota fiscal / comprovante nº"><input value={pForm.invoice_number||''} onChange={e=>setPForm({...pForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={pForm.invoice_issued_date||''} onChange={e=>setPForm({...pForm,invoice_issued_date:e.target.value})}/></Field>
@@ -7226,7 +7328,7 @@ function App(){
       .finance-quick-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:2px 0 4px}.finance-quick-summary>div{padding:12px;border:1px solid var(--border);border-radius:11px;background:#fff}.finance-quick-summary span{display:block;color:var(--muted);font-size:9px;font-weight:850;text-transform:uppercase}.finance-quick-summary b{display:block;margin-top:5px;color:var(--primary);font-size:16px}.finance-summary-status b{display:flex;align-items:center;gap:6px}.finance-summary-status i{width:9px;height:9px;border-radius:50%}.finance-summary-status.paid i{background:var(--green)}.finance-summary-status.partial i{background:var(--yellow)}.finance-summary-status.unpaid i{background:var(--red)}
       .payment-breakdown-row.simplified{grid-template-columns:repeat(4,minmax(0,1fr))}.payment-breakdown-row.simplified .payment-row-remove{align-self:end}
       .repasses-box{padding:0;border:0;background:transparent}.repasses-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:11px}.repasses-head span{display:block;color:#80663d;font-size:9px;font-weight:900;letter-spacing:.08em}.repasses-head b{display:block;margin-top:3px;color:var(--text);font-size:13px}.repasses-head small{display:block;margin-top:3px;color:var(--muted);font-size:10px}.repasses-list{display:grid;gap:9px}.repasse-row{display:grid;grid-template-columns:2fr 1.3fr 1fr auto;gap:9px;align-items:end;padding:11px;border:1px solid var(--border);border-radius:11px;background:#fff}.repasse-total{margin-top:10px;text-align:right;color:var(--muted);font-size:11px}.repasse-total b{color:var(--primary);font-size:13px}
-      .financial-documents{display:grid;gap:10px}.documents-upload-zone{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border:1px dashed #cddde3;border-radius:13px;background:#fff;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}.documents-upload-zone:hover{border-color:#8eb1bd;box-shadow:0 6px 18px rgba(49,95,114,.06)}.documents-upload-zone b{display:block;color:var(--text);font-size:12px}.documents-upload-zone small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px}.document-picker{position:relative;overflow:hidden;white-space:nowrap}.document-picker input{position:absolute;inset:0;opacity:0;cursor:pointer}.documents-list{display:grid;gap:8px}.document-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 11px;border:1px solid var(--border);border-radius:11px;background:#fff;animation:ocDocIn .18s ease-out}.document-chip.pending{border-style:dashed;background:#fbfdfe}.document-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;background:var(--primary-soft);color:var(--primary);font-weight:900}.document-meta{min-width:0}.document-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:11.5px}.document-meta small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px}.document-actions{display:flex;gap:6px}.documents-empty{padding:12px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:10.5px;text-align:center;background:#fff}.table-document-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.table-document-item{display:inline-flex;gap:5px}.table-document-actions small{color:var(--muted);font-size:9px}.form-section{transition:box-shadow .2s ease,border-color .2s ease,transform .2s ease;animation:ocSectionIn .22s ease-out both}.form-section:hover{box-shadow:0 7px 20px rgba(36,55,70,.045)}.financial-status-dot,.finance-status-interactive{transition:transform .16s ease,box-shadow .16s ease}.finance-status-interactive:hover{transform:translateY(-1px)}@keyframes ocSectionIn{from{opacity:.65;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes ocDocIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.form-section,.document-chip{animation:none!important}.form-section,.documents-upload-zone,.financial-status-dot,.finance-status-interactive{transition:none!important}}
+      .financial-documents{display:grid;gap:10px}.documents-upload-zone{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px;border:1px dashed #cddde3;border-radius:13px;background:#fff;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}.documents-upload-zone:hover{border-color:#8eb1bd;box-shadow:0 6px 18px rgba(49,95,114,.06)}.documents-upload-zone b{display:block;color:var(--text);font-size:12px}.documents-upload-zone small{display:block;margin-top:4px;color:var(--muted);font-size:10.5px}.document-picker{position:relative;overflow:hidden;white-space:nowrap}.document-picker input{position:absolute;inset:0;opacity:0;cursor:pointer}.documents-list{display:grid;gap:8px}.document-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 11px;border:1px solid var(--border);border-radius:11px;background:#fff;animation:ocDocIn .18s ease-out}.document-chip.pending{border-style:dashed;background:#fbfdfe}.document-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;background:var(--primary-soft);color:var(--primary);font-weight:900}.document-meta{min-width:0}.document-meta b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:11.5px}.document-meta small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px}.document-actions{display:flex;gap:6px}.document-actions .btn,.document-picker{display:inline-flex;align-items:center;justify-content:center;gap:6px}.documents-empty{padding:12px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);font-size:10.5px;text-align:center;background:#fff}.table-document-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.table-document-item{display:inline-flex;gap:5px}.table-document-actions small{color:var(--muted);font-size:9px}.form-section{transition:box-shadow .2s ease,border-color .2s ease,transform .2s ease;animation:ocSectionIn .22s ease-out both}.form-section:hover{box-shadow:0 7px 20px rgba(36,55,70,.045)}.financial-status-dot,.finance-status-interactive{transition:transform .16s ease,box-shadow .16s ease}.finance-status-interactive:hover{transform:translateY(-1px)}@keyframes ocSectionIn{from{opacity:.65;transform:translateY(4px)}to{opacity:1;transform:none}}@keyframes ocDocIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.form-section,.document-chip{animation:none!important}.form-section,.documents-upload-zone,.financial-status-dot,.finance-status-interactive{transition:none!important}}
       @media(max-width:1050px){.form-section-grid,.finance-simple-grid,.payment-breakdown-row.simplified{grid-template-columns:repeat(2,minmax(0,1fr))}.finance-quick-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.repasse-row{grid-template-columns:1fr 1fr}}
       @media(max-width:650px){.form-section-grid,.finance-simple-grid,.payment-breakdown-row.simplified,.finance-quick-summary,.repasse-row{grid-template-columns:1fr}.form-section{padding:14px}.repasses-head,.documents-upload-zone{flex-direction:column;align-items:stretch}.document-chip{grid-template-columns:auto minmax(0,1fr)}.document-actions{grid-column:1/-1}.document-actions .btn{flex:1}}
     `}</style>
@@ -7332,17 +7434,17 @@ function App(){
     <style>{`
       .nav-finance-group{position:relative;width:100%}
       .nav-finance-group>button{width:100%;display:flex;align-items:center;justify-content:space-between}
-      .nav-finance-main{display:flex;align-items:center;gap:10px;min-width:0}
-      .nav-chevron{font-size:18px;line-height:1;opacity:.65;transition:transform .18s ease,opacity .18s ease}
+      .nav-finance-main{display:flex;align-items:center;gap:10px;min-width:0}.nav-icon{flex:0 0 auto;stroke-width:1.9}.nav button{display:flex;align-items:center;gap:10px}.nav-finance-submenu>button svg{flex:0 0 auto;stroke-width:1.9}.logout-btn{display:flex;align-items:center;justify-content:center;gap:7px}
+      .nav-chevron-icon{opacity:.65;transition:transform .18s ease,opacity .18s ease;flex:0 0 auto}
       .nav-finance-submenu{display:grid;grid-template-rows:0fr;opacity:0;transform:translateY(-3px);transition:grid-template-rows .2s ease,opacity .18s ease,transform .18s ease;overflow:hidden}
       .nav-finance-submenu>button{min-height:0;overflow:hidden;margin:0 0 0 18px;padding-top:0!important;padding-bottom:0!important;border-left:2px solid #d8e5e9!important;border-radius:0 9px 9px 0!important;background:transparent!important;color:#62757e!important;font-size:12px!important;transition:min-height .2s ease,padding .2s ease,background .15s ease,color .15s ease,transform .15s ease}
       .nav-finance-group:hover .nav-finance-submenu,.nav-finance-group:focus-within .nav-finance-submenu,.nav-finance-group.open .nav-finance-submenu{grid-template-rows:1fr;opacity:1;transform:none}
       .nav-finance-group:hover .nav-finance-submenu>button,.nav-finance-group:focus-within .nav-finance-submenu>button,.nav-finance-group.open .nav-finance-submenu>button{min-height:36px;padding-top:8px!important;padding-bottom:8px!important}
-      .nav-finance-group:hover .nav-chevron,.nav-finance-group:focus-within .nav-chevron,.nav-finance-group.open .nav-chevron{transform:rotate(90deg);opacity:1}
+      .nav-finance-group:hover .nav-chevron-icon,.nav-finance-group:focus-within .nav-chevron-icon,.nav-finance-group.open .nav-chevron-icon{transform:rotate(90deg);opacity:1}
       .nav-finance-submenu>button:hover{background:#eef5f7!important;color:#315f72!important;transform:translateX(2px)}
       .nav-finance-submenu>button.active{background:#eaf2f5!important;color:#315f72!important;border-left-color:#4d8191!important;font-weight:800}
       .daily-export-actions{flex-wrap:wrap}
-      @media(max-width:760px){.nav-finance-submenu{grid-template-rows:1fr;opacity:1;transform:none}.nav-finance-submenu>button{min-height:36px;padding-top:8px!important;padding-bottom:8px!important}.nav-chevron{transform:rotate(90deg)}.daily-export-actions .btn{flex:1 1 140px}}
+      @media(max-width:760px){.nav-finance-submenu{grid-template-rows:1fr;opacity:1;transform:none}.nav-finance-submenu>button{min-height:36px;padding-top:8px!important;padding-bottom:8px!important}.nav-chevron-icon{transform:rotate(90deg)}.daily-export-actions .btn{flex:1 1 140px}}
       @media(prefers-reduced-motion:reduce){.nav-chevron,.nav-finance-submenu,.nav-finance-submenu>button{transition:none!important}}
     `}</style>
 
@@ -7456,4 +7558,4 @@ function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onR
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<App/>);
+createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><App/></>);
