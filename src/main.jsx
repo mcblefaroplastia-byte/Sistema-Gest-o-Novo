@@ -108,7 +108,7 @@ const paymentTone = record => {
   if(received>0 || status.includes('parcial') || status.includes('faturado') || status.includes('aguardando')) return 'partial';
   return 'unpaid';
 };
-const paymentToneLabel = record => paymentTone(record)==='paid'?'Pago':paymentTone(record)==='partial'?'Parcial / em processamento':'Não pago';
+const paymentToneLabel = record => paymentTone(record)==='paid'?'Pago':paymentTone(record)==='partial'?'Pago parcial':'Não pago';
 const paymentAllocation = (record,type) => {
   const rows=normalizedBreakdown(record?.payment_breakdown);
   const total=netFinancialAmount(record);
@@ -1323,11 +1323,13 @@ function App(){
   const [filterMonth,setFilterMonth] = useState(monthNow);
   const [filterDoctor,setFilterDoctor] = useState('');
   const [filterExam,setFilterExam] = useState('');
+  const [examStatus,setExamStatus] = useState('');
   const [examSearch,setExamSearch] = useState('');
   const [sMonth,setSMonth] = useState(monthNow);
   const [sDoctor,setSDoctor] = useState('');
   const [sSurgeryType,setSSurgeryType] = useState('');
   const [sProcedure,setSProcedure] = useState('');
+  const [sStatus,setSStatus] = useState('');
   const [sSearch,setSSearch] = useState('');
   const [pMonth,setPMonth] = useState(monthNow);
   const [pDoctor,setPDoctor] = useState('');
@@ -2310,9 +2312,10 @@ function App(){
       (!filterMonth||r.date.startsWith(filterMonth)) &&
       (!filterDoctor||r.doctor_id===filterDoctor) &&
       (!filterExam||r.exam_type_ids?.includes(filterExam)) &&
+      (!examStatus||r.status===examStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[records,filterMonth,filterDoctor,filterExam,examSearch]);
+  },[records,filterMonth,filterDoctor,filterExam,examStatus,examSearch]);
 
   const filteredSurgeries = useMemo(()=>{
     const q=sSearch.trim().toLowerCase();
@@ -2321,9 +2324,10 @@ function App(){
       (!sDoctor||r.doctor_id===sDoctor) &&
       (!sSurgeryType||r.surgery_type_id===sSurgeryType) &&
       (!sProcedure||r.procedure_ids?.includes(sProcedure)) &&
+      (!sStatus||r.status===sStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[surgeries,sMonth,sDoctor,sSurgeryType,sProcedure,sSearch]);
+  },[surgeries,sMonth,sDoctor,sSurgeryType,sProcedure,sStatus,sSearch]);
 
   const procedureLaunchRows = useMemo(()=>groupProcedureRows(procedureRecords),[procedureRecords]);
 
@@ -2415,14 +2419,14 @@ function App(){
 
   const financialRows = useMemo(()=>{
     const examRows=records.map(r=>({
-      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.exam,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
       installments:Number(r.installments||1),notes:r.financial_notes||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],indicatedBy:r.indicatedBy||'',base_record:r
     }));
     const surgeryRows=surgeries.map(r=>({
-      key:`surgery:${r.group_id||r.id}`,source:'Cirurgia',source_type:'surgery',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`surgery:${r.group_id||r.id}`,source:'Cirurgia',source_type:'surgery',launch_date:r.date,realization_date:r.scheduled_on||'',date:isRealizedOperational(r.status)?(r.scheduled_on||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.surgery_type,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2431,7 +2435,7 @@ function App(){
 
     // Procedimento avulso: um lançamento financeiro por launch_group_id, mesmo que tenha vários procedimentos.
     const standalone=groupProcedureRows(procedureRecords.filter(r=>!r.surgery_id&&!r.surgery_group_id)).map(r=>({
-      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2440,7 +2444,7 @@ function App(){
 
     // Procedimentos vinculados só entram financeiramente quando marcados como cobrados à parte.
     const extras=procedureRecords.filter(r=>(r.surgery_id||r.surgery_group_id)&&r.included_in_package===false&&numericValue(r.additional_amount)>0).map(r=>({
-      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',date:r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:numericValue(r.additional_amount),gross:numericValue(r.additional_amount),discount:0,received:0,billed:0,expected_receipt_date:r.expected_receipt_date||'',received_date:'',installments:Number(r.installments||1),notes:r.financial_notes||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],indicatedBy:r.indicatedBy||'',base_record:r
@@ -2457,7 +2461,7 @@ function App(){
       (!finOrigin||r.payment_origin===finOrigin || (r.payment_origin==='Misto'&&['Particular','Convênio'].includes(finOrigin))) &&
       (!finSource||r.source_type===finSource) &&
       (!finOperationalStatus||r.operational_status===finOperationalStatus) &&
-      (!finStatus||r.financial_status===finStatus) &&
+      (!finStatus||paymentTone(r)===finStatus) &&
       (!finMethod||r.payment_method===finMethod) &&
       (!q||patientMatchesSearch(r.base_record||r,q)||String(r.service||'').toLowerCase().includes(q))
     );
@@ -5310,8 +5314,9 @@ function App(){
             <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
+            <Select value={examStatus} setValue={setExamStatus} options={['Agendado','Pendente','Realizado','Cancelado']} first="Todos os status"/>
             <input className="patient-search-input" value={examSearch} onChange={e=>setExamSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nos exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('');setExamSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('');setExamStatus('');setExamSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredExams}
@@ -5349,8 +5354,9 @@ function App(){
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
             <Select value={sSurgeryType} setValue={setSSurgeryType} options={surgeryTypes} first="Todas as cirurgias"/>
             <Select value={sProcedure} setValue={setSProcedure} options={procedureOptions} first="Todos os procedimentos vinculados"/>
+            <Select value={sStatus} setValue={setSStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
             <input className="patient-search-input" value={sSearch} onChange={e=>setSSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nas cirurgias"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSSurgeryType('');setSProcedure('');setSSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSSurgeryType('');setSProcedure('');setSStatus('');setSSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredSurgeries}
@@ -5900,9 +5906,9 @@ function App(){
             <Select value={finDoctor} setValue={setFinDoctor} options={doctors} first="Todos os médicos"/>
             <select value={finInsurance} onChange={e=>setFinInsurance(e.target.value)}><option value="">Todos os convênios</option><option value="particular">Particular</option>{insurances.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select>
             <Select value={finOrigin} setValue={setFinOrigin} options={['Particular','Convênio','Misto']} first="Todas as origens"/>
-            <select value={finSource} onChange={e=>setFinSource(e.target.value)}><option value="">Cirurgias + Procedimentos</option><option value="surgery">Cirurgias</option><option value="procedure">Procedimentos</option><option value="extra">Adicionais de pacote</option></select>
+            <select value={finSource} onChange={e=>setFinSource(e.target.value)}><option value="">Exames + Cirurgias + Procedimentos</option><option value="exam">Exames</option><option value="surgery">Cirurgias</option><option value="procedure">Procedimentos</option><option value="extra">Adicionais de pacote</option></select>
             <Select value={finOperationalStatus} setValue={setFinOperationalStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada','Realizado','Agendado','Cancelado']} first="Todos os status operacionais"/>
-            <Select value={finStatus} setValue={setFinStatus} options={['Não definido','Pendente','Parcial','Recebido','Faturado ao convênio','Aguardando convênio','Glosado']} first="Todos os status financeiros"/>
+            <Select value={finStatus} setValue={setFinStatus} options={[{id:'paid',name:'Pago'},{id:'partial',name:'Pago parcial'},{id:'unpaid',name:'Não pago'}]} first="Todos os pagamentos"/>
             <Select value={finMethod} setValue={setFinMethod} options={['PIX','Dinheiro','Débito','Crédito','Crédito parcelado','Boleto','Transferência','Convênio','Múltiplos']} first="Todas as formas de pagamento"/>
             <input value={finSearch} onChange={e=>setFinSearch(e.target.value)} placeholder="Buscar paciente, nascimento ou serviço"/>
             <button className="btn btn-light" onClick={()=>{setFinMonth('');setFinDoctor('');setFinInsurance('');setFinOrigin('');setFinSource('');setFinOperationalStatus('');setFinStatus('');setFinMethod('');setFinSearch('')}}>Limpar</button>
@@ -5944,7 +5950,7 @@ function App(){
 
         <div className="card finance-detail-card">
           <div className="section-title"><div><h2>Detalhamento financeiro</h2><p className="finance-detail-subtitle">Produção e recebimento por lançamento. Pacotes aparecem uma única vez.</p></div></div>
-          <div className="table-wrap"><table className="finance-table"><thead><tr><th>Data</th><th>Paciente</th><th>Financeiro</th><th>Origem</th><th>Serviço</th><th>Indicado por</th><th>Realizado por</th><th>Convênio</th><th>Status</th><th>Valor bruto</th><th>Desconto</th><th>Valor líquido</th><th>Recebido</th><th>Saldo</th><th>Forma</th><th>NF</th></tr></thead>
+          <div className="table-wrap"><table className="finance-table"><thead><tr><th>Data referência</th><th>Paciente</th><th>Pagamento</th><th>Origem</th><th>Serviço</th><th>Indicado por</th><th>Realizado por</th><th>Convênio</th><th>Status</th><th>Valor bruto</th><th>Desconto</th><th>Valor líquido</th><th>Recebido</th><th>Saldo</th><th>Forma</th><th>NF</th></tr></thead>
           <tbody>{filteredFinancialRows.length?filteredFinancialRows.map(r=><tr key={r.key}>
             <td>{brDate(r.date)}</td><td><b>{r.patient}</b></td><td><PaymentTrafficLight record={r} onClick={()=>{if(r.source_type==='surgery'){openEditSurgery(r.base_record);setPage('cirurgias')}else if(r.source_type==='exam'){openEditExam(r.base_record);setPage('exames')}else if(r.source_type==='procedure'){openEditProcedure(r.base_record);setPage('procedimentos')}}}/></td>
             <td>{r.payment_origin||'—'}</td><td><b>{r.service}</b></td><td>{r.indicatedBy||'—'}</td><td>{r.doctor||'—'}</td><td>{r.insurance||'Particular'}</td><td><span className={`status ${statusClass(r.operational_status)}`}>{r.operational_status}</span></td>
@@ -5972,7 +5978,7 @@ function App(){
             return <tr key={`invoice:${r.key}`}>
               <td>{r.invoice_issued_date?brDate(r.invoice_issued_date):<span className="muted">—</span>}</td>
               <td><b>{r.patient}</b><small className="invoice-patient-date">Lançamento: {brDate(r.date)}</small></td>
-              <td>{r.source}</td><td>{r.service}</td><td>{r.invoice_number||<span className="muted">—</span>}</td><td><b>{moneyBR(r.total)}</b></td><td>{r.financial_status||'—'}</td>
+              <td>{r.source}</td><td>{r.service}</td><td>{r.invoice_number||<span className="muted">—</span>}</td><td><b>{moneyBR(r.total)}</b></td><td><span className={`payment-label ${paymentTone(r)}`}>{paymentToneLabel(r)}</span></td>
               <td>{docs.length?<div className="invoice-document-list">{docs.map((doc,i)=><div key={doc.path||i}><span>{doc.name||`Documento ${i+1}`}</span><button type="button" className="btn btn-light" onClick={()=>openInvoiceFile(doc.path,doc.name)}>Visualizar</button><button type="button" className="btn btn-light" onClick={()=>downloadInvoiceFile(doc.path,doc.name||`documento-${i+1}`)}>Baixar</button></div>)}</div>:<span className="muted">Sem documento</span>}</td>
             </tr>;
           }):<tr><td colSpan="8" className="empty">Nenhuma nota fiscal ou lançamento encontrado com estes filtros.</td></tr>}</tbody></table></div>
