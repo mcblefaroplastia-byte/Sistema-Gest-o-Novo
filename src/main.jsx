@@ -346,6 +346,7 @@ const groupLaunchRows = (rows, kind) => {
           patient_id:r.patients?.id||'',
           date:r.exam_date,
           realization_date:r.realization_date||'',
+          eye:r.eye||'',
           patient:r.patients?.full_name||'',
           whatsapp:r.patients?.whatsapp||'',
           patient_birth_date:r.patients?.birth_date||'',
@@ -762,22 +763,91 @@ function DoctorTypeMatrix({title,subtitle,rows,itemLabel='Procedimento'}){
 }
 
 
-function StandardPriceField({kind,names,value,onApply}){
-  const cleanNames=(Array.isArray(names)?names:[names]).filter(Boolean);
-  const options=STANDARD_PRICE_PRESETS.filter(p=>p.kind===kind&&cleanNames.some(name=>presetAppliesToName(p,name)));
-  return <div className="standard-price-field">
-    <label>Valor padrão sugerido</label>
-    <select value={value||''} onChange={e=>{
-      const preset=STANDARD_PRICE_PRESETS.find(p=>p.key===e.target.value);
-      if(preset) onApply(preset);
-      else onApply(null);
-    }}>
-      <option value="">Selecione uma opção da tabela (opcional)</option>
-      {options.map(p=><option key={p.key} value={p.key}>{p.label} - {moneyBR(p.amount)}</option>)}
-    </select>
-    <small>Ao selecionar, o valor é preenchido automaticamente. Você pode alterar o valor manualmente depois.</small>
-  </div>;
-}
+const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',eye='',detail='',associatedWithSurgery=false}) => {
+  if(!name) return null;
+  const candidates=STANDARD_PRICE_PRESETS.filter(p=>p.kind===kind&&presetAppliesToName(p,name));
+  if(!candidates.length) return null;
+
+  const originWanted=origin==='SUS'?'SUS':origin==='Convênio'?'Convênio':'Particular';
+  const ins=normalizeCatalogLabel(insuranceName);
+  const eyeNorm=normalizeCatalogLabel(eye);
+  const detailNorm=normalizeCatalogLabel(detail);
+  const serviceNorm=normalizeCatalogLabel(name);
+
+  // Condições especiais da tabela de exames.
+  if(kind==='exam'&&serviceNorm.includes('consulta')){
+    if(ins.includes('saude vida')) return {amount:100,key:'exam-consulta-saude-vida',label:'Consulta - Saúde Vida + Organização',origin:'Convênio'};
+    if(ins.includes('vale saude')) return {amount:200,key:'exam-consulta-vale-saude',label:'Consulta - Vale Saúde',origin:'Convênio'};
+  }
+
+  // Valores de procedimentos da tabela são gerais. Quando não existe preço
+  // específico por convênio/SUS, o mesmo valor da tabela continua válido.
+  let pool=candidates.filter(p=>p.origin===originWanted);
+  if(!pool.length && kind==='procedure') pool=[...candidates];
+
+  // Cirurgias sem diferenciação explícita por convênio usam o valor geral da tabela.
+  // Catarata e Pterígio continuam respeitando os grupos específicos.
+  if(!pool.length && kind==='surgery'){
+    const isCataract=serviceNorm.includes('catarata')||serviceNorm.includes('faco')||serviceNorm==='trec';
+    const isPterygium=serviceNorm.includes('pterig');
+    if(!isCataract&&!isPterygium) pool=[...candidates];
+    if(isPterygium && !ins.includes('iamspe')){
+      const generic=candidates.filter(p=>normalizeCatalogLabel(p.label).includes('pterigio particular convenio'));
+      if(generic.length) pool=generic;
+    }
+  }
+
+  if(!pool.length) return null;
+
+  const score=p=>{
+    const label=normalizeCatalogLabel(p.label);
+    let s=0;
+    if(label.includes(serviceNorm)) s+=5;
+
+    if(kind==='surgery'){
+      if((ins.includes('unimed')||ins.includes('oeste'))&&label.includes('unimed oeste')) s+=30;
+      if((ins.includes('cassi')||ins.includes('iamspe')||ins.includes('sulamerica'))&&(label.includes('cassi')||label.includes('iamspe')||label.includes('sulamerica'))) s+=30;
+      if(ins.includes('iamspe')&&label.includes('iamspe')) s+=35;
+      if(serviceNorm.includes('pterig')&&!ins.includes('iamspe')&&label.includes('particular convenio')) s+=25;
+    }
+
+    if(eyeNorm.includes('ambos')){
+      if(label.includes('2 olhos')||label.includes(' ao ')) s+=18;
+      if(label.includes('1 olho')||label.includes('individual')) s-=10;
+    }else if(eyeNorm.includes('direito')||eyeNorm.includes('esquerdo')){
+      if(label.includes('1 olho')||label.includes('individual')||label.includes('cada olho')) s+=18;
+      if(label.includes('2 olhos')||label.includes(' ao ')) s-=10;
+    }
+
+    if(detailNorm){
+      for(const token of detailNorm.split(' ').filter(x=>x.length>2)) if(label.includes(token)) s+=7;
+    }
+
+    if(associatedWithSurgery){
+      if(label.includes('na cirurgia')||label.includes('pacote na cirurgia')) s+=30;
+      else if(kind==='procedure'&&(serviceNorm.includes('botox')||serviceNorm.includes('toxina')||serviceNorm.includes('laser')||serviceNorm.includes('bioestimul'))) s-=6;
+    }else if(kind==='procedure'&&(label.includes('na cirurgia')||label.includes('pacote na cirurgia'))){
+      s-=20;
+    }
+    return s;
+  };
+
+  const ranked=pool.map(p=>({p,s:score(p)})).sort((a,b)=>b.s-a.s);
+  if(!ranked.length) return null;
+  const best=ranked[0];
+  const ties=ranked.filter(x=>x.s===best.s);
+  const amounts=[...new Set(ties.map(x=>numericValue(x.p.amount)))];
+  if(amounts.length>1) return null;
+  return {amount:numericValue(best.p.amount),key:best.p.key,label:best.p.label,origin:best.p.origin};
+};
+
+const automaticPriceTotal = ({kind,names,origin,insuranceName,eye,detail}) => {
+  const clean=(Array.isArray(names)?names:[names]).filter(Boolean);
+  if(!clean.length) return null;
+  const picked=clean.map(name=>automaticPriceForItem({kind,name,origin,insuranceName,eye,detail}));
+  if(picked.some(x=>!x)) return null;
+  return {amount:picked.reduce((sum,x)=>sum+x.amount,0),keys:picked.map(x=>x.key),labels:picked.map(x=>x.label)};
+};
 
 function PaymentTrafficLight({record,onClick}){
   const tone=paymentTone(record);
@@ -805,6 +875,7 @@ function PaymentBreakdownEditor({form,setForm,insurances}){
       payment_origin:payerTypes.length>1?'Misto':(payerTypes[0]||form.payment_origin||'Particular'),
       payment_method:methods.length>1?'Múltiplos':(methods[0]||form.payment_method||''),
       financial_status:net>0&&received>=net?'Recebido':received>0?'Parcial':(next.some(x=>x.payer_type==='Convênio')?'Aguardando convênio':'Pendente'),
+      payment_confirmed:true,
       received_date:receivedDates.length?receivedDates[receivedDates.length-1]:(form.received_date||''),
       expected_receipt_date:pendingDates[0]||form.expected_receipt_date||'',
       billed_amount:String(billed||'')
@@ -860,7 +931,7 @@ function FinanceQuickSummary({form,setForm}){
     : ((net>0&&received>=net)||status==='recebido')
       ? 'paid'
       : 'unpaid';
-  const paymentValue=tone==='paid'?'Pago':tone==='partial'?'Pago parcial':'Não pago';
+  const paymentValue=!form.payment_confirmed?'':tone==='paid'?'Pago':tone==='partial'?'Pago parcial':'Não pago';
   const balance=Math.max(net-received,0);
 
   const changePayment=value=>{
@@ -869,6 +940,7 @@ function FinanceQuickSummary({form,setForm}){
       setForm({
         ...form,
         financial_status:'Recebido',
+        payment_confirmed:true,
         received_amount:String(net||''),
         received_date:form.received_date||todayISO()
       });
@@ -879,6 +951,7 @@ function FinanceQuickSummary({form,setForm}){
       setForm({
         ...form,
         financial_status:'Parcial',
+        payment_confirmed:true,
         received_amount:String(current||''),
         received_date:form.received_date||todayISO()
       });
@@ -887,6 +960,7 @@ function FinanceQuickSummary({form,setForm}){
     setForm({
       ...form,
       financial_status:'Pendente',
+      payment_confirmed:true,
       received_amount:'',
       received_date:''
     });
@@ -897,10 +971,11 @@ function FinanceQuickSummary({form,setForm}){
     <div><span>Recebido</span><b>{moneyBR(received)}</b></div>
     <div><span>Saldo</span><b>{moneyBR(balance)}</b></div>
     <div className={`finance-summary-status ${tone}`}>
-      <span>Pagamento</span>
+      <span>Pagamento *</span>
       <div className="finance-summary-payment-select">
         <i/>
-        <select value={paymentValue} onChange={e=>changePayment(e.target.value)} aria-label="Pagamento">
+        <select value={paymentValue} onChange={e=>changePayment(e.target.value)} aria-label="Pagamento" required>
+          <option value="" disabled>Selecione</option>
           <option>Pago</option>
           <option>Pago parcial</option>
           <option>Não pago</option>
@@ -945,8 +1020,13 @@ const V36PaymentSummaryStyle = () => <style>{`
     border-color:#4d8191;
     box-shadow:0 0 0 3px rgba(77,129,145,.12);
   }
+  .auto-price-field{display:grid;gap:6px}.auto-price-field small{color:#667985;font-size:10px;line-height:1.45}.auto-price-field input{font-weight:800}.package-auto-price{display:block;margin-top:4px;color:#667985;font-size:9px}.brand-mark.brand-logo-ready{padding:3px;background:#fff;overflow:hidden}.brand-mark.brand-logo-ready img{display:block;width:100%;height:100%;object-fit:contain}.brand-mark span{display:grid;place-items:center;width:100%;height:100%}
 `}</style>;
 
+
+const V40LoginPriceStyle = () => <style>{`
+  .user-box small{display:block;margin-top:5px;color:#83929a;font-size:9px;line-height:1.35}
+`}</style>;
 function Modal({open,onClose,title,subtitle,children,onSave,saveText}){
   if(!open) return null;
   return <div className="modal" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
@@ -1016,6 +1096,13 @@ function accessLabel(profile){
   return profile.role === 'admin' ? 'Administrador' : 'Orientadora';
 }
 
+function BrandMark(){
+  const [failed,setFailed]=useState(false);
+  return <div className={`brand-mark ${failed?'':'brand-logo-ready'}`}>
+    {failed?<span>OC</span>:<img src="/logo-oftalmocastro.png" alt="OftalmoCastro" onError={()=>setFailed(true)}/>} 
+  </div>;
+}
+
 function Login({onLogged}) {
   const [email,setEmail] = useState('');
   const [password,setPassword] = useState('');
@@ -1034,7 +1121,7 @@ function Login({onLogged}) {
 
   return <div className="login-page">
     <form className="login-card" onSubmit={login}>
-      <div className="brand-mark">OC</div>
+      <BrandMark/>
       <h1>Oftalmocastro</h1>
       <p>Gestão de exames e cirurgias</p>
       <Field label="E-mail"><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></Field>
@@ -1296,7 +1383,6 @@ function App(){
   const [profile,setProfile] = useState(null);
   const [loading,setLoading] = useState(true);
   const [page,setPage] = useState('exames');
-  const [launcherName,setLauncherName] = useState(()=>sessionStorage.getItem('oc_launcher_name') || '');
 
   const [doctors,setDoctors] = useState([]);
   const [examTypes,setExamTypes] = useState([]);
@@ -1404,20 +1490,21 @@ function App(){
 
   const emptyFinanceForm = () => ({
     payment_origin:'Particular',total_amount:'',discount_amount:'',received_amount:'',payment_method:'',installments:'1',payment_breakdown:[],
-    financial_status:'Pendente',expected_receipt_date:'',received_date:'',billed_amount:'',billing_competence:'',billing_date:'',financial_notes:'',price_preset_key:'',
+    financial_status:'',payment_confirmed:false,price_manual:false,coverage_choice:'',expected_receipt_date:'',received_date:'',billed_amount:'',billing_competence:'',billing_date:'',financial_notes:'',price_preset_key:'',
     invoice_number:'',invoice_issued_date:'',invoice_file_path:'',invoice_file:null,financial_documents:[],pending_documents:[],removed_document_paths:[],repasses:[]
   });
   const [examForm,setExamForm] = useState({
-    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
+    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',
+    date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [pForm,setPForm] = useState({
-    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',
+    date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',
     insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
+
   const [followupForm,setFollowupForm] = useState({
     followup_date:todayISO(),status:'A fazer',next_contact_date:'',responsible:'',note:''
   });
@@ -1437,26 +1524,49 @@ function App(){
     if(session?.user?.id) loadAll();
   },[session?.user?.id]);
 
-  const launcherOptions = ['Juliana','Luiza','Elisangela'];
-  const launcherOptionsAll = ['Juliana','Luiza','Elisangela','ADM'];
+  const teamResponsibleOptions = [...new Set([...(profiles||[]).map(p=>p.full_name).filter(Boolean),'ADM'])];
 
   // Catálogos físicos separados no Supabase:
   // surgery_types = somente cirurgias | procedures = somente procedimentos.
   // O SQL V17 desativa o item no catálogo errado sem apagar o histórico.
   const procedureOptions = useMemo(()=>procedures,[procedures]);
 
-  const currentLaunchName = profile?.role === 'admin'
-    ? 'ADM'
-    : launcherName;
+  const insuranceNameById=id=>insurances.find(x=>x.id===id)?.name||'';
+  const explicitOrigin=form=>form.coverage_choice==='__PARTICULAR__'?'Particular':(form.coverage_choice?(normalizeCatalogLabel(insuranceNameById(form.insurance_id)).includes('sus')?'SUS':'Convênio'):'');
+  const examAutoPrice=useMemo(()=>{
+    if(!examForm.coverage_choice||!examForm.eye) return null;
+    return automaticPriceTotal({kind:'exam',names:(examForm.exam_type_ids||[]).map(id=>examTypes.find(x=>x.id===id)?.name),origin:explicitOrigin(examForm),insuranceName:insuranceNameById(examForm.insurance_id),eye:examForm.eye});
+  },[examForm.exam_type_ids,examForm.coverage_choice,examForm.insurance_id,examForm.eye,examTypes,insurances]);
+  const surgeryAutoPrice=useMemo(()=>{
+    if(!sForm.coverage_choice||!sForm.eye) return null;
+    return automaticPriceTotal({kind:'surgery',names:surgeryTypes.find(x=>x.id===sForm.surgery_type_id)?.name||'',origin:explicitOrigin(sForm),insuranceName:insuranceNameById(sForm.insurance_id),eye:sForm.eye,detail:sForm.lio_description});
+  },[sForm.surgery_type_id,sForm.coverage_choice,sForm.insurance_id,sForm.eye,sForm.lio_description,surgeryTypes,insurances]);
+  const procedureAutoPrice=useMemo(()=>{
+    if(!pForm.coverage_choice||!pForm.eye) return null;
+    return automaticPriceTotal({kind:'procedure',names:(pForm.procedure_ids||[]).map(id=>procedureOptions.find(x=>x.id===id)?.name),origin:explicitOrigin(pForm),insuranceName:insuranceNameById(pForm.insurance_id),eye:pForm.eye});
+  },[pForm.procedure_ids,pForm.coverage_choice,pForm.insurance_id,pForm.eye,procedureOptions,insurances]);
 
-  const examLaunchName = examForm.launcher || currentLaunchName;
-  const surgeryLaunchName = sForm.launcher || currentLaunchName;
-  const procedureLaunchName = pForm.launcher || currentLaunchName;
+  useEffect(()=>{
+    if(examForm.price_manual) return;
+    const next=examAutoPrice?String(examAutoPrice.amount):'';
+    if(String(examForm.total_amount||'')!==next) setExamForm(f=>({...f,total_amount:next,price_preset_key:examAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
+  },[examAutoPrice,examForm.price_manual]);
+  useEffect(()=>{
+    if(sForm.price_manual) return;
+    const extras=(sForm.procedure_ids||[]).reduce((sum,id)=>{const cfg=sForm.procedure_finance?.[id];return sum+(cfg?.included===false?numericValue(cfg.amount):0)},0);
+    const next=surgeryAutoPrice?String(surgeryAutoPrice.amount+extras):'';
+    if(String(sForm.total_amount||'')!==next) setSForm(f=>({...f,total_amount:next,price_preset_key:surgeryAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
+  },[surgeryAutoPrice,sForm.price_manual,sForm.procedure_ids,sForm.procedure_finance]);
+  useEffect(()=>{
+    if(pForm.price_manual) return;
+    const next=procedureAutoPrice?String(procedureAutoPrice.amount):'';
+    if(String(pForm.total_amount||'')!==next) setPForm(f=>({...f,total_amount:next,price_preset_key:procedureAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
+  },[procedureAutoPrice,pForm.price_manual]);
 
-  const selectLauncher = name => {
-    setLauncherName(name);
-    sessionStorage.setItem('oc_launcher_name', name);
-  };
+  const currentLaunchName = profile?.full_name?.trim() || session?.user?.email || (profile?.role==='admin'?'ADM':'Usuário');
+  const examLaunchName = currentLaunchName;
+  const surgeryLaunchName = currentLaunchName;
+  const procedureLaunchName = currentLaunchName;
 
   const loadAll = async ()=>{
     setLoading(true);
@@ -1473,7 +1583,7 @@ function App(){
       supabase.from('insurances').select('*').eq('active',true).order('name'),
       supabase.from('profiles').select('id,full_name,role,active').eq('active',true).order('full_name'),
       supabase.from('exams').select(`
-        id,launch_group_id,exam_date,realization_date,status,observation,launched_by,launched_by_name,insurance_id,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
+        id,launch_group_id,exam_date,realization_date,eye,status,observation,launched_by,launched_by_name,insurance_id,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
         patients(id,full_name,whatsapp,birth_date),
         doctors:doctors!exams_doctor_id_fkey(id,name),
         indicated_by:doctors!exams_indicated_by_doctor_id_fkey(id,name),
@@ -1722,15 +1832,14 @@ function App(){
   };
 
   const addExam = async ()=>{
-    if(!examLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
-      return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
+    if(!examForm.date||!examForm.realization_date||!examForm.patient.trim()||!examForm.indicated_by_doctor_id||!examForm.doctor_id||!examForm.exam_type_ids?.length||!examForm.coverage_choice||!examForm.eye||!examForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, exame(s), convênio/Particular, olho e pagamento.');
     try{
       const patient_id=await getOrCreatePatient(examForm.patient,examForm.whatsapp,examForm.patient_birth_date);
       const launch_group_id=crypto.randomUUID();
       const rows=examForm.exam_type_ids.map(examTypeId=>({
         launch_group_id,
-        exam_date:examForm.date, realization_date:examForm.realization_date||null, patient_id, doctor_id:examForm.doctor_id,
+        exam_date:examForm.date, realization_date:examForm.realization_date||null, eye:examForm.eye||null, patient_id, doctor_id:examForm.doctor_id,
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
         exam_type_id:examTypeId, status:examForm.status,
         insurance_id:examForm.insurance_id||null,
@@ -1746,7 +1855,7 @@ function App(){
       if(error) throw error;
       if(examSaved?.length){ const docs=await syncFinancialDocuments(examForm,'exam',launch_group_id); await supabase.from('exams').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setExamModal(false);
-      setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
@@ -1790,9 +1899,8 @@ function App(){
   };
 
   const addSurgery = async ()=>{
-    if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.surgery_type_id)
-      return alert('Preencha data, paciente, cirurgião e selecione a cirurgia.');
+    if(!sForm.date||!sForm.scheduled_on||!sForm.patient.trim()||!sForm.indicated_by_doctor_id||!sForm.doctor_id||!sForm.surgery_type_id||!sForm.coverage_choice||!sForm.eye||!sForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, cirurgião, cirurgia, convênio/Particular, olho e pagamento.');
 
     try{
       const patient_id=await getOrCreatePatient(sForm.patient,sForm.whatsapp,sForm.patient_birth_date);
@@ -1855,8 +1963,8 @@ function App(){
       setSurgeryModal(false);
       setSForm({
         date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',
-        eye:'Não se aplica',insurance_id:'',status:'Solicitação',
-        arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()
+        eye:'',insurance_id:'',status:'Solicitação',
+        arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()
       });
       await loadAll();
     }catch(e){
@@ -1871,6 +1979,7 @@ function App(){
     setExamForm({
       date:r.date,
       realization_date:r.realization_date||'',
+      eye:r.eye||'',
       patient:r.patient,
       patient_birth_date:r.patient_birth_date||'',
       whatsapp:r.whatsapp || '',
@@ -1878,9 +1987,8 @@ function App(){
       indicated_by_doctor_id:r.indicatedById||'',
       exam_type_ids:r.exam_type_ids||[],
       insurance_id:r.insurance_id||'',status:r.status,
-      launcher:r.launchedByName || currentLaunchName || '',
-      obs:r.obs || '',payment_origin:r.payment_origin||financeOrigin(r),total_amount:r.total_amount||'',discount_amount:r.discount_amount||'',received_amount:r.received_amount||'',
-      payment_method:r.payment_method||'',installments:String(r.installments||1),financial_status:r.financial_status||'Pendente',
+            obs:r.obs || '',payment_origin:r.payment_origin||financeOrigin(r),total_amount:r.total_amount||'',discount_amount:r.discount_amount||'',received_amount:r.received_amount||'',
+      payment_method:r.payment_method||'',installments:String(r.installments||1),financial_status:r.financial_status||'Pendente',payment_confirmed:true,price_manual:true,coverage_choice:r.insurance_id||'__PARTICULAR__',
       expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',invoice_file:null,financial_documents:(r.financial_documents?.length?r.financial_documents:(r.invoice_file_path?[{id:r.invoice_file_path,path:r.invoice_file_path,name:'Documento anexado',type:'',size:0}]:[])),pending_documents:[],removed_document_paths:[],repasses:r.repasses||[]
     });
     setExamModal(true);
@@ -1906,11 +2014,10 @@ function App(){
       payment:r.payment || 'Não informado',
       payment_origin:r.payment_origin||financeOrigin(r),
       total_amount:r.total_amount||'',discount_amount:r.discount_amount||'',received_amount:r.received_amount||'',payment_method:r.payment_method||'',installments:String(r.installments||1),
-      financial_status:r.financial_status||'Pendente',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      financial_status:r.financial_status||'Pendente',payment_confirmed:true,price_manual:true,coverage_choice:r.insurance_id||'__PARTICULAR__',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
       billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',invoice_file:null,financial_documents:(r.financial_documents?.length?r.financial_documents:(r.invoice_file_path?[{id:r.invoice_file_path,path:r.invoice_file_path,name:'Documento anexado',type:'',size:0}]:[])),pending_documents:[],removed_document_paths:[],repasses:r.repasses||[],
       lio_description:r.lio_description||'',procedure_finance:r.procedure_finance||{},
-      launcher:r.launchedByName || currentLaunchName || '',
-      obs:r.obs || ''
+            obs:r.obs || ''
     });
     setSurgeryModal(true);
   };
@@ -1920,6 +2027,7 @@ function App(){
     setPForm({
       date:r.date,
       realization_date:r.realization_date||'',
+      eye:r.eye||'',
       patient:r.patient,
       patient_birth_date:r.patient_birth_date||'',
       whatsapp:r.whatsapp||'',
@@ -1933,10 +2041,9 @@ function App(){
       payment:r.payment||'Não informado',
       payment_origin:r.payment_origin||financeOrigin(r),
       total_amount:r.total_amount||'',discount_amount:r.discount_amount||'',received_amount:r.received_amount||'',payment_method:r.payment_method||'',installments:String(r.installments||1),
-      financial_status:r.financial_status||'Pendente',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
+      financial_status:r.financial_status||'Pendente',payment_confirmed:true,price_manual:true,coverage_choice:r.insurance_id||'__PARTICULAR__',expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
       billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',invoice_file:null,financial_documents:(r.financial_documents?.length?r.financial_documents:(r.invoice_file_path?[{id:r.invoice_file_path,path:r.invoice_file_path,name:'Documento anexado',type:'',size:0}]:[])),pending_documents:[],removed_document_paths:[],repasses:r.repasses||[],
-      launcher:r.launchedByName||currentLaunchName||'',
-      obs:r.obs||''
+            obs:r.obs||''
     });
     setProcedureModal(true);
   };
@@ -1955,9 +2062,8 @@ function App(){
   const updateExam = async ()=>{
     const original = records.find(r=>r.id===editingExamId);
     if(!original) return;
-    if(!examLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!examForm.date||!examForm.patient.trim()||!examForm.doctor_id||!examForm.exam_type_ids?.length)
-      return alert('Preencha data, paciente, médico e selecione pelo menos um exame.');
+    if(!examForm.date||!examForm.realization_date||!examForm.patient.trim()||!examForm.indicated_by_doctor_id||!examForm.doctor_id||!examForm.exam_type_ids?.length||!examForm.coverage_choice||!examForm.eye||!examForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, exame(s), convênio/Particular, olho e pagamento.');
 
     try{
       await updatePatient(original.patient_id, examForm.patient, examForm.whatsapp, examForm.patient_birth_date);
@@ -1969,6 +2075,7 @@ function App(){
         launch_group_id:original.group_id,
         exam_date:examForm.date,
         realization_date:examForm.realization_date||null,
+        eye:examForm.eye||null,
         patient_id:original.patient_id,
         doctor_id:examForm.doctor_id,
         indicated_by_doctor_id:examForm.indicated_by_doctor_id||null,
@@ -1990,7 +2097,7 @@ function App(){
 
       setExamModal(false);
       setEditingExamId(null);
-      setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2001,9 +2108,8 @@ function App(){
   const updateSurgery = async ()=>{
     const original = surgeries.find(r=>r.id===editingSurgeryId);
     if(!original) return;
-    if(!surgeryLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!sForm.date||!sForm.patient.trim()||!sForm.doctor_id||!sForm.surgery_type_id)
-      return alert('Preencha data, paciente, cirurgião e selecione a cirurgia.');
+    if(!sForm.date||!sForm.scheduled_on||!sForm.patient.trim()||!sForm.indicated_by_doctor_id||!sForm.doctor_id||!sForm.surgery_type_id||!sForm.coverage_choice||!sForm.eye||!sForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, cirurgião, cirurgia, convênio/Particular, olho e pagamento.');
 
     try{
       await updatePatient(original.patient_id, sForm.patient, sForm.whatsapp, sForm.patient_birth_date);
@@ -2071,7 +2177,7 @@ function App(){
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2080,9 +2186,8 @@ function App(){
   };
 
   const addProcedure = async ()=>{
-    if(!procedureLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!pForm.date||!pForm.patient.trim()||!pForm.doctor_id||!pForm.procedure_ids?.length)
-      return alert('Preencha data, paciente, médico e selecione pelo menos um procedimento.');
+    if(!pForm.date||!pForm.realization_date||!pForm.patient.trim()||!pForm.indicated_by_doctor_id||!pForm.doctor_id||!pForm.procedure_ids?.length||!pForm.coverage_choice||!pForm.eye||!pForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, procedimento(s), convênio/Particular, olho e pagamento.');
     try{
       const patient_id=await getOrCreatePatient(pForm.patient,pForm.whatsapp,pForm.patient_birth_date);
       const launch_group_id=crypto.randomUUID();
@@ -2125,7 +2230,7 @@ function App(){
       if(error) throw error;
       if(procedureSaved?.length){ const docs=await syncFinancialDocuments(pForm,'procedure',launch_group_id); await supabase.from('procedure_records').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setProcedureModal(false);
-      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2136,9 +2241,8 @@ function App(){
   const updateProcedure = async ()=>{
     const original=procedureLaunchRows.find(r=>(r.group_key||r.id)===editingProcedureId);
     if(!original) return;
-    if(!procedureLaunchName) return alert('Selecione quem está fazendo o lançamento.');
-    if(!pForm.date||!pForm.patient.trim()||!pForm.doctor_id||!pForm.procedure_ids?.length)
-      return alert('Preencha data, paciente, médico e selecione pelo menos um procedimento.');
+    if(!pForm.date||!pForm.realization_date||!pForm.patient.trim()||!pForm.indicated_by_doctor_id||!pForm.doctor_id||!pForm.procedure_ids?.length||!pForm.coverage_choice||!pForm.eye||!pForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, procedimento(s), convênio/Particular, olho e pagamento.');
     try{
       await updatePatient(original.patient_id,pForm.patient,pForm.whatsapp,pForm.patient_birth_date);
 
@@ -2194,7 +2298,7 @@ function App(){
 
       setProcedureModal(false);
       setEditingProcedureId(null);
-      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2206,19 +2310,19 @@ function App(){
   const closeExamModal = ()=>{
     setExamModal(false);
     setEditingExamId(null);
-    setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+    setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});
   };
 
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+    setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
   };
 
   const closeProcedureModal = ()=>{
     setProcedureModal(false);
     setEditingProcedureId(null);
-    setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+    setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
   };
 
   const delExam = async id=>{
@@ -2515,6 +2619,20 @@ function App(){
       })
       .sort((a,b)=>String(a.patient||'').localeCompare(String(b.patient||''),'pt-BR'));
   },[records,surgeries,procedureLaunchRows,dailyDate,dailySource,dailyStage,dailySearch]);
+
+  const openDailyReportEdit = row=>{
+    if(row.report_source==='exam'){
+      openEditExam(row);
+      return;
+    }
+    if(row.report_source==='surgery'){
+      openEditSurgery(row);
+      return;
+    }
+    if(row.report_source==='procedure'){
+      openEditProcedure(row);
+    }
+  };
 
   const invoiceManagementRows = useMemo(()=>{
     const q=invoiceSearch.trim().toLowerCase();
@@ -2832,7 +2950,7 @@ function App(){
     procedures:dashboardProcedures.filter(x=>launchedName(x)===name).length
   }));
 
-  const currentAccessName = currentLaunchName || 'Selecione quem está lançando';
+  const currentAccessName = currentLaunchName || session?.user?.email || 'Usuário';
 
   const resultSummary=useMemo(()=>{
     const totalEx=totalItems(dashboardExams,'exam_type_ids');
@@ -5255,21 +5373,18 @@ function App(){
     }
   };
 
-  const logout=async()=>{ sessionStorage.removeItem('oc_launcher_name'); setLauncherName(''); await supabase.auth.signOut(); setProfile(null); };
+  const logout=async()=>{ await supabase.auth.signOut(); setProfile(null); };
 
   if(loading) return <div className="loading-screen">Carregando...</div>;
   if(!session) return <Login onLogged={setSession}/>;
 
   return <div className="app">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark">OC</div><div><b>Oftalmocastro</b><span>Gestão de exames e cirurgias</span></div></div>
+      <div className="brand"><BrandMark/><div><b>Oftalmocastro</b><span>Gestão de exames e cirurgias</span></div></div>
       <div className="user-box">
-        <b>{profile?.role==='admin' ? 'ADM' : (launcherName || 'Orientadora')}</b>
+        <b>{currentLaunchName}</b>
         <span>{session.user.email}</span>
-        {profile?.role!=='admin'&&<select className="launcher-select" value={launcherName} onChange={e=>selectLauncher(e.target.value)}>
-          <option value="">Quem está lançando?</option>
-          {launcherOptions.map(name=><option key={name} value={name}>{name}</option>)}
-        </select>}
+        <small>{accessLabel(profile)} · lançamentos identificados automaticamente pelo login</small>
       </div>
       <div className="nav">
         <button className={page==='exames'?'active':''} onClick={()=>setPage('exames')}><Stethoscope className="nav-icon" size={18}/><span>Exames</span></button>
@@ -5299,7 +5414,7 @@ function App(){
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setExamModal(true)}}><Plus size={16}/> Novo exame</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});setExamModal(true)}}><Plus size={16}/> Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -5344,7 +5459,7 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'Não se aplica',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}><Plus size={16}/> Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}><Plus size={16}/> Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
@@ -5392,7 +5507,7 @@ function App(){
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
             <button className="btn btn-primary" onClick={()=>{
               setEditingProcedureId(null);
-              setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'Não se aplica',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:currentLaunchName||'',obs:'',...emptyFinanceForm()});
+              setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
               setProcedureModal(true);
             }}><Plus size={16}/> Novo procedimento</button>
           </div>
@@ -5565,11 +5680,18 @@ function App(){
         <div className="card daily-report-sheet" ref={dailyReportRef}>
           <div className="daily-report-title"><b>Exames / Cirurgias / Procedimentos — {brDate(dailyDate)} — {weekdayLabel(dailyDate)}</b><small>{dailyReportRows.length} registro(s) encontrado(s)</small></div>
           {dailyReportRows.length?dailyReportRows.map((r,index)=><article className="daily-report-item" key={`${r.report_source}:${r.group_id||r.id}:${index}`}>
-            <div className="daily-report-item-head"><strong>{index+1}. {r.report_type.toUpperCase()}: {r.service_name}</strong><span className={`status ${statusClass(r.status)}`}>{r.status}</span></div>
-            <div><b>DATA DO AGENDAMENTO:</b> {brDate(r.date)}{r.report_source==='surgery'&&r.scheduled_on?<> &nbsp; <b>DATA DA REALIZAÇÃO:</b> {brDate(r.scheduled_on)}</>:null}</div>
+            <div className="daily-report-item-head">
+              <strong>{index+1}. {r.report_type.toUpperCase()}: {r.service_name}</strong>
+              <div className="daily-report-item-actions no-pdf">
+                <span className={`status ${statusClass(r.status)}`}>{r.status}</span>
+                <button type="button" className="btn btn-edit-soft daily-edit-btn" onClick={()=>openDailyReportEdit(r)}>Editar</button>
+              </div>
+            </div>
+            <div><b>DATA DO AGENDAMENTO:</b> {brDate(r.date)} &nbsp; <b>DATA DA REALIZAÇÃO:</b> {brDate(r.report_source==='surgery'?(r.scheduled_on||''):(r.realization_date||''))||'—'}</div>
             {r.report_source==='surgery'&&<div><b>LIO:</b> {r.lio_description||'—'}</div>}
             <div><b>CONVÊNIO:</b> {r.insurance||financeOrigin(r)||'Particular'}</div>
             <div><b>NOME DO PACIENTE:</b> <strong>{r.patient}</strong>{r.patient_birth_date?` — Nasc. ${brDate(r.patient_birth_date)}`:''}</div>
+            <div><b>PAGAMENTO:</b> {paymentToneLabel(r)}{r.payment_method?` — ${r.payment_method}`:''}{Number(r.installments||1)>1?` — ${r.installments}x`:''}</div>
             <div><b>VALOR / PAGAMENTOS:</b> {paymentSummaryText(r)}</div>
             <div><b>INDICAÇÃO:</b> {r.indicatedBy||'—'}</div>
             <div><b>{r.report_source==='surgery'?'CIRURGIÃO':'REALIZADO POR'}:</b> {r.doctor||'—'}</div>
@@ -5954,7 +6076,7 @@ function App(){
           <tbody>{filteredFinancialRows.length?filteredFinancialRows.map(r=><tr key={r.key}>
             <td>{brDate(r.date)}</td><td><b>{r.patient}</b></td><td><PaymentTrafficLight record={r} onClick={()=>{if(r.source_type==='surgery'){openEditSurgery(r.base_record);setPage('cirurgias')}else if(r.source_type==='exam'){openEditExam(r.base_record);setPage('exames')}else if(r.source_type==='procedure'){openEditProcedure(r.base_record);setPage('procedimentos')}}}/></td>
             <td>{r.payment_origin||'—'}</td><td><b>{r.service}</b></td><td>{r.indicatedBy||'—'}</td><td>{r.doctor||'—'}</td><td>{r.insurance||'Particular'}</td><td><span className={`status ${statusClass(r.operational_status)}`}>{r.operational_status}</span></td>
-            <td>{moneyBR(r.gross??r.total)}</td><td>{moneyBR(r.discount||0)}</td><td><b>{moneyBR(r.total)}</b></td><td>{moneyBR(r.received)}</td><td>{moneyBR(Math.max(r.total-r.received,0))}</td><td>{r.payment_method||'—'}</td>
+            <td>{moneyBR(r.gross??r.total)}</td><td>{moneyBR(r.discount||0)}</td><td><b>{moneyBR(r.total)}</b></td><td>{moneyBR(r.received)}</td><td>{moneyBR(Math.max(r.total-r.received,0))}</td><td>{r.payment_method||normalizedBreakdown(r.payment_breakdown).map(x=>x.method).filter(Boolean).join(' + ')||'—'}</td>
             <td>{(r.financial_documents?.length||r.invoice_file_path)?<div className="table-document-actions">{(r.financial_documents?.length?r.financial_documents:[{path:r.invoice_file_path,name:r.invoice_number||'Nota fiscal'}]).map((doc,i)=><span key={doc.path||i} className="table-document-item"><button type="button" className="btn btn-light invoice-open-btn" onClick={()=>openInvoiceFile(doc.path,doc.name)}>Visualizar</button><button type="button" className="btn btn-light invoice-open-btn" onClick={()=>downloadInvoiceFile(doc.path,doc.name||`documento-${i+1}`)}>Baixar</button></span>)}</div>:r.invoice_number||'—'}</td>
           </tr>):<tr><td colSpan="16" className="empty">Nenhum valor financeiro encontrado.</td></tr>}</tbody></table></div>
         </div>
@@ -6072,13 +6194,13 @@ function App(){
             <div className="manual-number">01</div>
             <h3>Acesso ao sistema</h3>
             <p>Entre com o e-mail e a senha cadastrados. O acesso pode ser de <b>ADM</b> ou <b>Orientadora</b>.</p>
-            <div className="manual-note">Os dois acessos podem utilizar o sistema completo. No acesso Orientadora, selecione Juliana, Luiza ou Elisangela para identificar quem realizou cada lançamento.</div>
+            <div className="manual-note">Os lançamentos são identificados automaticamente pelo usuário que está logado. Não é necessário escolher manualmente quem está lançando.</div>
           </article>
 
           <article className="card manual-card">
             <div className="manual-number">02</div>
-            <h3>Quem está lançando?</h3>
-            <p>No acesso de Orientadora, selecione <b>Juliana, Luiza ou Elisangela</b> no campo da lateral antes de realizar os lançamentos.</p>
+            <h3>Identificação do lançamento</h3>
+            <p>O sistema registra automaticamente o <b>nome do usuário logado</b> em cada novo lançamento. O nome aparece no menu lateral junto ao e-mail da conta.</p>
             <div className="manual-note">No acesso ADM, o responsável é preenchido automaticamente como ADM.</div>
           </article>
 
@@ -6093,7 +6215,7 @@ function App(){
             <div className="manual-number">04</div>
             <h3>Lançar uma cirurgia</h3>
             <p>Acesse <b>Cirurgias → Nova cirurgia</b>. Informe a <b>data do agendamento</b> e a <b>data da realização</b>, paciente, cirurgião e cirurgia. Se fizer parte do pacote, vincule os procedimentos adicionais. No Financeiro, cada recebimento deve ser marcado como <b>Pago</b> ou <b>Não pago</b>; o sistema calcula recebido, saldo e situação automaticamente.</p>
-            <div className="manual-note">Mantenha o status atualizado para que os indicadores mensais representem a situação real da cirurgia.</div>
+            <div className="manual-note">Mantenha o status atualizado para que os indicadores mensais representem a situação real da cirurgia.</div><div className="manual-note">Nos lançamentos de Exames, Cirurgias e Procedimentos, data de realização, médico que indicou, profissional que realizou/fará, convênio ou Particular e situação do pagamento são campos obrigatórios. O valor é sugerido automaticamente pela tabela quando houver correspondência única e pode ser alterado manualmente.</div>
           </article>
 
           <article className="card manual-card">
@@ -6106,7 +6228,7 @@ function App(){
           <article className="card manual-card">
             <div className="manual-number">06</div>
             <h3>Editar informações</h3>
-            <p>Na tabela de Exames ou Cirurgias, localize o registro e clique em <b>Editar</b>. O formulário abrirá com as informações atuais. Faça a alteração e clique em <b>Salvar alterações</b>.</p>
+            <p>Na tabela de Exames, Cirurgias ou Procedimentos, ou diretamente no <b>Relatório diário</b>, clique em <b>Editar</b>. O mesmo formulário completo do lançamento será aberto. É possível corrigir atendimento, convênio, valores, <b>Pago / Pago parcial / Não pago</b>, forma de pagamento, parcelas, documentos e repasses. Ao salvar, a alteração também atualiza a <b>Visão geral do Financeiro</b>.</p>
           </article>
 
           <article className="card manual-card">
@@ -7033,29 +7155,27 @@ function App(){
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO ATENDIMENTO</b><small>Informações clínicas e operacionais principais.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento"><input type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização"><input type="date" value={examForm.realization_date||''} onChange={e=>setExamForm({...examForm,realization_date:e.target.value})}/></Field>
-            <Field label="Paciente"><input value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
+            <Field label="Data do agendamento *"><input required type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
+            <Field label="Data da realização *"><input required type="date" value={examForm.realization_date||''} onChange={e=>setExamForm({...examForm,realization_date:e.target.value})}/></Field>
+            <Field label="Paciente *"><input required value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
             <Field label="Data de nascimento"><input type="date" value={examForm.patient_birth_date||''} onChange={e=>setExamForm({...examForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio"><Select value={examForm.insurance_id} setValue={v=>setExamForm({...examForm,insurance_id:v,payment_origin:v?'Convênio':'Particular'})} options={insurances} first="Particular / selecione"/></Field>
-            <Field label="Médico que indicou"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
-            <Field label="Médico que realizou / realizará"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <Field label="Convênio / Particular *"><Select value={examForm.coverage_choice||''} setValue={v=>setExamForm({...examForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
+            <Field label="Olho *"><Select value={examForm.eye||''} setValue={v=>setExamForm({...examForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
+            <Field label="Médico que indicou *"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <Field label="Médico que realizou / realizará *"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
             <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Pendente','Realizado','Cancelado']}/></Field>
-            <Field label="Lançado por"><Select value={examForm.launcher || currentLaunchName || ''} setValue={v=>setExamForm({...examForm,launcher:v})} options={launcherOptionsAll} first="Selecione quem lançou"/></Field>
-            <Field label={editingExamId ? "Exame" : "Exames"} full>
+            <Field label={editingExamId ? "Exame *" : "Exames *"} full>
               <div className="exam-multi-select"><div className="exam-multi-head"><span>Selecione um ou vários exames</span><b>{examForm.exam_type_ids?.length||0} selecionado(s)</b></div><div className="exam-options">
-                {examTypes.map(exam=>{const checked=examForm.exam_type_ids?.includes(exam.id);return <label key={exam.id} className={`exam-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=examForm.exam_type_ids||[];setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id]});}}/><span>{exam.name}</span></label>;})}
+                {examTypes.map(exam=>{const checked=examForm.exam_type_ids?.includes(exam.id);return <label key={exam.id} className={`exam-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=examForm.exam_type_ids||[];setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id],price_manual:false});}}/><span>{exam.name}</span></label>;})}
               </div></div>
             </Field>
           </div>
         </div>
 
         <div className="form-section finance-section full">
-          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valores e recebimentos. Saldo e situação são calculados automaticamente.</small></div></div>
+          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor sugerido automaticamente pela tabela, com edição manual quando necessário. Pagamento é obrigatório.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <StandardPriceField kind="exam" names={(examForm.exam_type_ids||[]).map(id=>examTypes.find(x=>x.id===id)?.name)} value={examForm.price_preset_key} onApply={preset=>setExamForm({...examForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):examForm.total_amount,payment_origin:preset?.origin||examForm.payment_origin})}/>
-            <Field label="Origem"><Select value={examForm.payment_origin} setValue={v=>setExamForm({...examForm,payment_origin:v})} options={['Particular','Convênio','Misto','SUS']}/></Field>
-            <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value})}/></Field>
+            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value,price_manual:true})}/><small>{examForm.price_manual?'Valor ajustado manualmente.':examAutoPrice?`Prévia automática pela tabela: ${examAutoPrice.labels.join(' + ')}.`:'Selecione o atendimento. Antes de escolher convênio/Particular, a prévia usa o valor Particular e recalcula automaticamente depois.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={examForm.discount_amount||''} onChange={e=>setExamForm({...examForm,discount_amount:e.target.value})}/></Field>
             <FinanceQuickSummary form={examForm} setForm={setExamForm}/>
             <PaymentBreakdownEditor form={examForm} setForm={setExamForm} insurances={insurances}/>
@@ -7208,6 +7328,8 @@ function App(){
       .daily-report-item{padding:21px 4px 22px!important;margin:0!important;border-bottom:1px solid #dce5e8!important;line-height:1.65!important;page-break-inside:avoid}
       .daily-report-item+.daily-report-item{margin-top:5px!important}
       .daily-report-item-head{margin-bottom:12px!important;gap:18px}
+      .daily-report-item-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+      .daily-edit-btn{padding:7px 11px!important;min-height:32px}
       .daily-report-item>div:not(.daily-report-item-head){margin:5px 0!important}
       .daily-report-item b{margin-right:4px}
       .invoice-management-card{margin-top:22px}
@@ -7231,36 +7353,33 @@ function App(){
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DA CIRURGIA</b><small>Informações principais para identificação e acompanhamento.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento"><input type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização"><input type="date" value={sForm.scheduled_on||''} onChange={e=>setSForm({...sForm,scheduled_on:e.target.value})}/></Field>
-            <Field label="Paciente"><input value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
+            <Field label="Data do agendamento *"><input required type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
+            <Field label="Data da realização *"><input required type="date" value={sForm.scheduled_on||''} onChange={e=>setSForm({...sForm,scheduled_on:e.target.value})}/></Field>
+            <Field label="Paciente *"><input required value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
             <Field label="Data de nascimento"><input type="date" value={sForm.patient_birth_date||''} onChange={e=>setSForm({...sForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio"><Select value={sForm.insurance_id} setValue={v=>setSForm({...sForm,insurance_id:v,payment_origin:v?'Convênio':(sForm.payment_origin==='Misto'?'Misto':'Particular')})} options={insurances} first="Particular / selecione"/></Field>
-            <Field label="Cirurgia"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v})} options={surgeryTypes} first="Selecione a cirurgia"/></Field>
-            <Field label="LIO / lente (quando aplicável)"><input value={sForm.lio_description||''} onChange={e=>setSForm({...sForm,lio_description:e.target.value})} placeholder="Ex.: Asférica / Trifocal / Mono Tórica"/></Field>
-            <Field label="Olho"><Select value={sForm.eye} setValue={v=>setSForm({...sForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
+            <Field label="Convênio / Particular *"><Select value={sForm.coverage_choice||''} setValue={v=>setSForm({...sForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
+            <Field label="Cirurgia *"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v,price_manual:false})} options={surgeryTypes} first="Selecione a cirurgia"/></Field>
+            <Field label="LIO / lente (quando aplicável)"><input value={sForm.lio_description||''} onChange={e=>setSForm({...sForm,lio_description:e.target.value,price_manual:false})} placeholder="Ex.: Asférica / Trifocal / Mono Tórica"/></Field>
+            <Field label="Olho *"><Select value={sForm.eye||''} setValue={v=>setSForm({...sForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
             <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-            <Field label="Médico que indicou"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
-            <Field label="Cirurgião que realizou / realizará"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
-            <Field label="Lançado por"><Select value={sForm.launcher || currentLaunchName || ''} setValue={v=>setSForm({...sForm,launcher:v})} options={launcherOptionsAll} first="Selecione quem lançou"/></Field>
+            <Field label="Médico que indicou *"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <Field label="Cirurgião que realizou / realizará *"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
             <Field label="Procedimentos vinculados (opcional)" full>
               <div className="procedure-multi-select"><div className="procedure-multi-head"><span>Selecione apenas os procedimentos que pertencem a este pacote</span><b>{sForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">
-                {procedureOptions.map(procedure=>{const checked=sForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=sForm.procedure_ids||[];setSForm({...sForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id]});}}/><span>{procedure.name}</span></label>;})}
+                {procedureOptions.map(procedure=>{const checked=sForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=sForm.procedure_ids||[];setSForm({...sForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}
               </div></div>
             </Field>
           </div>
         </div>
 
         <div className="form-section finance-section full">
-          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor do pacote, descontos e pagamentos. O sistema calcula o saldo automaticamente.</small></div></div>
+          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor do pacote sugerido automaticamente pela tabela, incluindo adicionais dos procedimentos quando houver. O valor continua editável.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <StandardPriceField kind="surgery" names={surgeryTypes.find(x=>x.id===sForm.surgery_type_id)?.name||''} value={sForm.price_preset_key} onApply={preset=>setSForm({...sForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):sForm.total_amount,payment_origin:preset?.origin||sForm.payment_origin})}/>
-            <Field label="Origem"><Select value={sForm.payment_origin} setValue={v=>setSForm({...sForm,payment_origin:v})} options={['Particular','Convênio','Misto']}/></Field>
-            <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value})} placeholder="0,00"/></Field>
+            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value,price_manual:true})} placeholder="0,00"/><small>{sForm.price_manual?'Valor ajustado manualmente.':surgeryAutoPrice?`Prévia automática pela tabela: ${surgeryAutoPrice.labels.join(' + ')}${(sForm.procedure_ids||[]).some(id=>sForm.procedure_finance?.[id]?.included===false)?' + adicionais dos procedimentos':''}.`:'Selecione a cirurgia. A prévia começa pela tabela Particular e recalcula ao escolher convênio, olho e lente quando aplicável.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={sForm.discount_amount||''} onChange={e=>setSForm({...sForm,discount_amount:e.target.value})}/></Field>
             <FinanceQuickSummary form={sForm} setForm={setSForm}/>
             <PaymentBreakdownEditor form={sForm} setForm={setSForm} insurances={insurances}/>
-            {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>:<span className="package-included-label">Sem valor adicional</span>}</div>})}</div>}
+            {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};const autoProc=sForm.coverage_choice?automaticPriceForItem({kind:'procedure',name:proc?.name||'',origin:explicitOrigin(sForm),insuranceName:insuranceNameById(sForm.insurance_id),eye:sForm.eye,associatedWithSurgery:true}):null;return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked,amount:e.target.checked?(cfg.amount||''):((cfg.amount||autoProc?.amount)?String(cfg.amount||autoProc.amount):'')}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<div><input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>{autoProc&&<small className="package-auto-price">Tabela: {moneyBR(autoProc.amount)}</small>}</div>:<span className="package-included-label">Incluído no valor do pacote</span>}</div>})}</div>}
             <Field label="Nota fiscal / comprovante nº"><input value={sForm.invoice_number||''} onChange={e=>setSForm({...sForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={sForm.invoice_issued_date||''} onChange={e=>setSForm({...sForm,invoice_issued_date:e.target.value})}/></Field>
             <FinancialDocumentsField form={sForm} setForm={setSForm} onOpen={openInvoiceFile} onDownload={downloadInvoiceFile}/>
@@ -7285,26 +7404,23 @@ function App(){
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO PROCEDIMENTO</b><small>Informações principais para identificação e acompanhamento.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento"><input type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização"><input type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field>
-            <Field label="Paciente"><input value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field>
+            <Field label="Data do agendamento *"><input required type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
+            <Field label="Data da realização *"><input required type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field>
+            <Field label="Paciente *"><input required value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field>
             <Field label="Data de nascimento"><input type="date" value={pForm.patient_birth_date||''} onChange={e=>setPForm({...pForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio"><Select value={pForm.insurance_id} setValue={v=>setPForm({...pForm,insurance_id:v,payment_origin:v?'Convênio':(pForm.payment_origin==='Misto'?'Misto':'Particular')})} options={insurances} first="Particular / selecione"/></Field>
-            <Field label="Médico que indicou"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Não informado"/></Field>
-            <Field label="Médico que realizou / realizará"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
-            <Field label="Olho"><Select value={pForm.eye} setValue={v=>setPForm({...pForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos']}/></Field>
+            <Field label="Convênio / Particular *"><Select value={pForm.coverage_choice||''} setValue={v=>setPForm({...pForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
+            <Field label="Médico que indicou *"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <Field label="Médico que realizou / realizará *"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <Field label="Olho *"><Select value={pForm.eye||''} setValue={v=>setPForm({...pForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
             <Field label="Status"><Select value={pForm.status} setValue={v=>setPForm({...pForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-            <Field label="Lançado por"><Select value={pForm.launcher||currentLaunchName||''} setValue={v=>setPForm({...pForm,launcher:v})} options={launcherOptionsAll} first="Selecione quem lançou"/></Field>
-            <Field label="Procedimentos" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id]});}}/><span>{procedure.name}</span></label>;})}</div></div></Field>
+            <Field label="Procedimentos *" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}</div></div></Field>
           </div>
         </div>
 
         <div className="form-section finance-section full">
-          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valores e pagamentos deste lançamento, sem duplicar os procedimentos agrupados.</small></div></div>
+          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor sugerido automaticamente pela tabela. Você pode ajustar manualmente quando necessário.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <StandardPriceField kind="procedure" names={(pForm.procedure_ids||[]).map(id=>procedureOptions.find(x=>x.id===id)?.name)} value={pForm.price_preset_key} onApply={preset=>setPForm({...pForm,price_preset_key:preset?.key||'',total_amount:preset?String(preset.amount):pForm.total_amount,payment_origin:preset?.origin||pForm.payment_origin})}/>
-            <Field label="Origem"><Select value={pForm.payment_origin} setValue={v=>setPForm({...pForm,payment_origin:v})} options={['Particular','Convênio','Misto']}/></Field>
-            <Field label="Valor total (R$)"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value})}/></Field>
+            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value,price_manual:true})}/><small>{pForm.price_manual?'Valor ajustado manualmente.':procedureAutoPrice?`Prévia automática pela tabela: ${procedureAutoPrice.labels.join(' + ')}.`:'Selecione o procedimento. A prévia aparece imediatamente e é recalculada ao escolher convênio/Particular quando houver diferença de tabela.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={pForm.discount_amount||''} onChange={e=>setPForm({...pForm,discount_amount:e.target.value})}/></Field>
             <FinanceQuickSummary form={pForm} setForm={setPForm}/>
             <PaymentBreakdownEditor form={pForm} setForm={setPForm} insurances={insurances}/>
@@ -7474,7 +7590,7 @@ function App(){
         <Field label="Data do contato"><input type="date" value={followupForm.followup_date} onChange={e=>setFollowupForm({...followupForm,followup_date:e.target.value})}/></Field>
         <Field label="Status do follow-up"><Select value={followupForm.status} setValue={v=>setFollowupForm({...followupForm,status:v})} options={['A fazer','Em contato','Aguardando paciente','Sem retorno','Concluído']}/></Field>
         <Field label="Próximo contato"><input type="date" value={followupForm.next_contact_date} onChange={e=>setFollowupForm({...followupForm,next_contact_date:e.target.value})}/></Field>
-        <Field label="Responsável"><Select value={followupForm.responsible} setValue={v=>setFollowupForm({...followupForm,responsible:v})} options={launcherOptionsAll} first="Selecione"/></Field>
+        <Field label="Responsável"><Select value={followupForm.responsible} setValue={v=>setFollowupForm({...followupForm,responsible:v})} options={teamResponsibleOptions} first="Selecione"/></Field>
         <Field label="Observação do follow-up" full><textarea rows="5" value={followupForm.note} onChange={e=>setFollowupForm({...followupForm,note:e.target.value})} placeholder="Ex.: paciente pediu retorno na sexta, aguarda autorização, não respondeu WhatsApp..."/></Field>
       </div>
     </Modal>
@@ -7564,4 +7680,4 @@ function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onR
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><App/></>);
+createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><V40LoginPriceStyle/><App/></>);
