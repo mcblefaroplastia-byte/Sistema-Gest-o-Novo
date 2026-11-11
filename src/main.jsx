@@ -97,7 +97,23 @@ const moneyBR = value => numericValue(value).toLocaleString('pt-BR',{style:'curr
 const financeOrigin = record => record?.payment_origin || (record?.insurance_id || record?.insurance ? 'Convênio' : 'Particular');
 const isCanceledOperational = status => String(status||'').toLowerCase().includes('cancel');
 const isRealizedOperational = status => String(status||'').toLowerCase().includes('realiz');
-const isPotentialOperational = status => !isCanceledOperational(status) && !isRealizedOperational(status);
+
+// Para o Financeiro, Exames e Procedimentos com "data da realização"
+// preenchida até hoje já contam como produção realizada, mesmo que o status
+// operacional ainda não tenha sido trocado manualmente para "Realizado".
+// Cirurgias continuam dependendo do status porque scheduled_on é apenas agenda.
+const isFinanciallyRealized = record => {
+  if(isRealizedOperational(record?.operational_status ?? record?.status)) return true;
+  const sourceType=String(record?.source_type||'');
+  const realizationDate=String(record?.realization_date||'');
+  return ['exam','procedure','extra'].includes(sourceType) &&
+    Boolean(realizationDate) &&
+    realizationDate<=todayISO();
+};
+
+const isFinanciallyPotential = record =>
+  !isCanceledOperational(record?.operational_status ?? record?.status) &&
+  !isFinanciallyRealized(record);
 const netFinancialAmount = record => Math.max(numericValue(record?.total_amount ?? record?.total)-numericValue(record?.discount_amount),0);
 const normalizedBreakdown = value => Array.isArray(value)?value:[];
 const paymentTone = record => {
@@ -802,7 +818,23 @@ const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',e
   const score=p=>{
     const label=normalizeCatalogLabel(p.label);
     let s=0;
-    if(label.includes(serviceNorm)) s+=5;
+
+    // Dá mais peso ao termo de correspondência mais específico.
+    // Ex.: "laser co2" deve ganhar de um preset genérico que contém apenas "laser".
+    const matchedTerms=(p.match||[])
+      .map(term=>normalizeCatalogLabel(term))
+      .filter(term=>term&&serviceNorm.includes(term));
+    if(matchedTerms.length){
+      const longest=Math.max(...matchedTerms.map(term=>term.length));
+      s+=longest*3;
+    }
+
+    // Quanto mais palavras do nome do serviço aparecem no rótulo do preço,
+    // maior a chance de este ser o preset correto.
+    const serviceTokens=serviceNorm.split(' ').filter(token=>token.length>2);
+    for(const token of serviceTokens) if(label.includes(token)) s+=4;
+
+    if(label.includes(serviceNorm)) s+=12;
 
     if(kind==='surgery'){
       if((ins.includes('unimed')||ins.includes('oeste'))&&label.includes('unimed oeste')) s+=30;
@@ -813,14 +845,14 @@ const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',e
 
     if(eyeNorm.includes('ambos')){
       if(label.includes('2 olhos')||label.includes(' ao ')) s+=18;
-      if(label.includes('1 olho')||label.includes('individual')) s-=10;
+      if(label.includes('1 olho')||label.includes('individual')||label.includes('cada olho')) s-=10;
     }else if(eyeNorm.includes('direito')||eyeNorm.includes('esquerdo')){
       if(label.includes('1 olho')||label.includes('individual')||label.includes('cada olho')) s+=18;
       if(label.includes('2 olhos')||label.includes(' ao ')) s-=10;
     }
 
     if(detailNorm){
-      for(const token of detailNorm.split(' ').filter(x=>x.length>2)) if(label.includes(token)) s+=7;
+      for(const token of detailNorm.split(' ').filter(x=>x.length>2)) if(label.includes(token)) s+=9;
     }
 
     if(associatedWithSurgery){
@@ -829,15 +861,32 @@ const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',e
     }else if(kind==='procedure'&&(label.includes('na cirurgia')||label.includes('pacote na cirurgia'))){
       s-=20;
     }
+
+    // Fora de pacote cirúrgico, prefere a opção unitária/base quando o nome
+    // cadastrado não diferencia explicitamente pacote, plano ou quantidade.
+    if(kind==='procedure'&&!associatedWithSurgery){
+      const asksPackage=serviceNorm.includes('pacote')||serviceNorm.includes('plano')||
+        serviceNorm.includes('3 aplic')||serviceNorm.includes('4 aplic')||serviceNorm.includes('3 sess');
+      if(!asksPackage){
+        if(label.includes('pacote')||label.includes('plano anual')||label.includes('3 aplic')||label.includes('4 aplic')||label.includes('3 sessoes')) s-=8;
+        if(label.includes('individual')||label.includes('1 aplicacao')||label.includes('1 sessao')||label.includes('1 seringa')||label.includes('aplicacao com retoque')) s+=4;
+      }
+    }
+
     return s;
   };
 
-  const ranked=pool.map(p=>({p,s:score(p)})).sort((a,b)=>b.s-a.s);
+  const ranked=pool
+    .map((p,index)=>({p,s:score(p),index}))
+    .sort((a,b)=>b.s-a.s || a.index-b.index);
+
   if(!ranked.length) return null;
+
+  // Antes, quando dois presets empatavam com valores diferentes, a função
+  // retornava null e o campo "Valor total" ficava vazio. Como esta informação
+  // é uma PRÉVIA editável, usamos o preset mais bem classificado e, em empate,
+  // o primeiro valor-base cadastrado na tabela.
   const best=ranked[0];
-  const ties=ranked.filter(x=>x.s===best.s);
-  const amounts=[...new Set(ties.map(x=>numericValue(x.p.amount)))];
-  if(amounts.length>1) return null;
   return {amount:numericValue(best.p.amount),key:best.p.key,label:best.p.label,origin:best.p.origin};
 };
 
@@ -2616,7 +2665,7 @@ function App(){
 
   const financialRows = useMemo(()=>{
     const examRows=records.map(r=>({
-      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.exam,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2632,7 +2681,7 @@ function App(){
 
     // Procedimento avulso: um lançamento financeiro por launch_group_id, mesmo que tenha vários procedimentos.
     const standalone=groupProcedureRows(procedureRecords.filter(r=>!r.surgery_id&&!r.surgery_group_id)).map(r=>({
-      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2641,7 +2690,7 @@ function App(){
 
     // Procedimentos vinculados só entram financeiramente quando marcados como cobrados à parte.
     const extras=procedureRecords.filter(r=>(r.surgery_id||r.surgery_group_id)&&r.included_in_package===false&&numericValue(r.additional_amount)>0).map(r=>({
-      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:numericValue(r.additional_amount),gross:numericValue(r.additional_amount),discount:0,received:0,billed:0,expected_receipt_date:r.expected_receipt_date||'',received_date:'',installments:Number(r.installments||1),notes:r.financial_notes||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],indicatedBy:r.indicatedBy||'',base_record:r
@@ -2667,11 +2716,11 @@ function App(){
 
   const financeSummary=useMemo(()=>{
     const valid=filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status));
-    const realized=valid.filter(r=>isRealizedOperational(r.operational_status));
+    const realized=valid.filter(r=>isFinanciallyRealized(r));
     const production=realized.reduce((s,r)=>s+r.total,0);
     const received=valid.reduce((s,r)=>s+r.received,0);
     const receivable=realized.reduce((s,r)=>s+Math.max(r.total-r.received,0),0);
-    const potential=valid.filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
+    const potential=valid.filter(r=>isFinanciallyPotential(r)).reduce((s,r)=>s+r.total,0);
     const particular=valid.reduce((s,r)=>s+paymentAllocation(r,'Particular'),0);
     const insurance=valid.reduce((s,r)=>s+paymentAllocation(r,'Convênio'),0);
     const lost=filteredFinancialRows.filter(r=>isCanceledOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
@@ -2684,9 +2733,9 @@ function App(){
     const baseMonth=finMonth||monthNow;
     const months=Array.from({length:6},(_,i)=>shiftMonth(baseMonth,i-5));
     const monthRows=m=>base.filter(r=>r.date?.startsWith(m)&&!isCanceledOperational(r.operational_status));
-    const productionTrend=months.map(m=>monthRows(m).filter(r=>isRealizedOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
+    const productionTrend=months.map(m=>monthRows(m).filter(r=>isFinanciallyRealized(r)).reduce((s,r)=>s+r.total,0));
     const receivedTrend=months.map(m=>monthRows(m).reduce((s,r)=>s+r.received,0));
-    const potentialTrend=months.map(m=>monthRows(m).filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
+    const potentialTrend=months.map(m=>monthRows(m).filter(r=>isFinanciallyPotential(r)).reduce((s,r)=>s+r.total,0));
     const sumBy=key=>filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status)).reduce((acc,r)=>{const k=r[key]||'Não informado';acc[k]=(acc[k]||0)+r.total;return acc;},{});
     return {
       labels:months.map(shortMonthLabel),productionTrend,receivedTrend,potentialTrend,
