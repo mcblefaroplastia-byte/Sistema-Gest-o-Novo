@@ -1020,13 +1020,37 @@ const V36PaymentSummaryStyle = () => <style>{`
     border-color:#4d8191;
     box-shadow:0 0 0 3px rgba(77,129,145,.12);
   }
-  .auto-price-field{display:grid;gap:6px}.auto-price-field small{color:#667985;font-size:10px;line-height:1.45}.auto-price-field input{font-weight:800}.package-auto-price{display:block;margin-top:4px;color:#667985;font-size:9px}.brand-mark.brand-logo-ready{padding:3px;background:#fff;overflow:hidden}.brand-mark.brand-logo-ready img{display:block;width:100%;height:100%;object-fit:contain}.brand-mark span{display:grid;place-items:center;width:100%;height:100%}
+  .auto-price-field{display:grid;gap:6px}.auto-price-field small{color:#667985;font-size:10px;line-height:1.45}.auto-price-field input{font-weight:800}.package-auto-price{display:block;margin-top:4px;color:#667985;font-size:9px}.brand-mark.brand-logo-ready{padding:0;background:transparent;box-shadow:none;overflow:visible}.brand-mark.brand-logo-ready img{display:block;width:100%;height:100%;object-fit:contain}.brand-mark span{display:grid;place-items:center;width:100%;height:100%}
 `}</style>;
 
 
 const V40LoginPriceStyle = () => <style>{`
   .user-box small{display:block;margin-top:5px;color:#83929a;font-size:9px;line-height:1.35}
 `}</style>;
+const V42AlignmentStyle = () => <style>{`
+  .filter-check-section{display:flex;flex-direction:column;gap:7px}.filter-check-section>label{font-size:12px;font-weight:800;color:#52636b;text-transform:uppercase;letter-spacing:.04em}.filter-check-grid{display:flex;gap:8px;flex-wrap:wrap}.filter-check{display:inline-flex;align-items:center;gap:8px;border:1px solid #d6e0e2;background:#fff;color:#40525b;border-radius:10px;padding:8px 11px;font:inherit;font-weight:700;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease;position:relative;overflow:hidden}.filter-check::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.65) 50%,transparent 65%);transform:translateX(-140%);transition:transform .45s ease}.filter-check:hover{transform:translateY(-2px) scale(1.015)}.filter-check:active{transform:scale(.97)}.filter-check.selected{animation:filterPop .28s ease}.filter-check.selected::after{transform:translateX(140%)}@keyframes filterPop{0%{transform:scale(.94)}60%{transform:scale(1.04)}100%{transform:scale(1)}}.filter-check span{display:grid;place-items:center;width:18px;height:18px;border:1px solid #bdcacc;border-radius:5px;background:#fff;color:#fff;font-size:12px}.filter-check:hover{border-color:#8eaaa0;background:#f7faf9}.filter-check.selected{border-color:#75a48e;background:#eaf5ef;color:#315f4c;box-shadow:0 0 0 2px rgba(79,138,107,.08)}.filter-check.selected span{background:#4f8a6b;border-color:#4f8a6b}.daily-report-filters{align-items:flex-end}.daily-report-filters .full{grid-column:1/-1}.promissory-status{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800}.promissory-status.paid{background:#e8f4ed;color:#397156}.promissory-status.partial{background:#fff4dc;color:#9a671d}.promissory-status.open{background:#edf1f3;color:#55646b}.promissory-status.overdue{background:#fbeaea;color:#a94a4a}.finance-kpi.danger{border-top-color:#b85c5c}.promissory-page .finance-table td{vertical-align:middle}
+
+  .period-filter{display:flex;gap:6px;align-items:center;min-width:210px}.period-filter select{max-width:80px}.period-filter input{min-width:132px}
+  .form-validation-banner{display:flex;flex-direction:column;gap:4px;background:#fff1f1;border:1px solid #e4a1a1;color:#963f3f;border-radius:12px;padding:12px 14px;animation:validationShake .34s ease}
+  .form-validation-banner strong{font-size:14px}.form-validation-banner span{font-size:12px}
+  @keyframes validationShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}50%{transform:translateX(5px)}75%{transform:translateX(-3px)}}
+  .field-error label{color:#a74343!important}.field-error input,.field-error select,.field-error textarea,.field-error .exam-multi-select,.field-error .procedure-multi-select,.field-error .finance-quick-summary{border-color:#c75a5a!important;background:#fff8f8!important;box-shadow:0 0 0 3px rgba(199,90,90,.09)!important}
+`}</style>;
+
+function PeriodFilter({mode,setMode,month,setMonth,date,setDate}){
+  return <div className="period-filter">
+    <select value={mode} onChange={e=>{
+      const next=e.target.value;setMode(next);
+      if(next==='month') setDate(''); else setMonth('');
+    }}>
+      <option value="month">Mês</option><option value="date">Data</option>
+    </select>
+    {mode==='month'
+      ? <input type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
+      : <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>}
+  </div>;
+}
+
 function Modal({open,onClose,title,subtitle,children,onSave,saveText}){
   if(!open) return null;
   return <div className="modal" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
@@ -1098,8 +1122,10 @@ function accessLabel(profile){
 
 function BrandMark(){
   const [failed,setFailed]=useState(false);
-  return <div className={`brand-mark ${failed?'':'brand-logo-ready'}`}>
-    {failed?<span>OC</span>:<img src="/logo-oftalmocastro.png" alt="OftalmoCastro" onError={()=>setFailed(true)}/>} 
+  return <div className={`brand-mark ${failed?'':'brand-logo-ready'}`} aria-label="OftalmoCastro">
+    {failed
+      ? <span>OC</span>
+      : <img src="/logo-oftalmocastro.png" alt="OftalmoCastro" onError={()=>setFailed(true)}/>}
   </div>;
 }
 
@@ -1405,29 +1431,46 @@ function App(){
   const [followupModal,setFollowupModal] = useState(false);
   const [followupTarget,setFollowupTarget] = useState(null);
   const [documentPreview,setDocumentPreview] = useState(null);
+  const [formErrors,setFormErrors] = useState({});
+  const setValidationErrors=(scope,fields,message)=>{
+    setFormErrors(prev=>({...prev,[scope]:{fields,message}}));
+    setTimeout(()=>document.querySelector(`[data-validation-scope="${scope}"] .field-error, [data-validation-scope="${scope}"] .form-validation-banner`)?.scrollIntoView({behavior:'smooth',block:'center'}),80);
+  };
+  const clearValidationErrors=scope=>setFormErrors(prev=>({...prev,[scope]:null}));
+  const fieldError=(scope,name)=>Boolean(formErrors?.[scope]?.fields?.includes(name));
 
   const [filterMonth,setFilterMonth] = useState(monthNow);
+  const [filterDate,setFilterDate] = useState('');
+  const [filterPeriodMode,setFilterPeriodMode] = useState('month');
   const [filterDoctor,setFilterDoctor] = useState('');
   const [filterExam,setFilterExam] = useState('');
   const [examStatus,setExamStatus] = useState('');
   const [examSearch,setExamSearch] = useState('');
   const [sMonth,setSMonth] = useState(monthNow);
+  const [sDate,setSDate] = useState('');
+  const [sPeriodMode,setSPeriodMode] = useState('month');
   const [sDoctor,setSDoctor] = useState('');
   const [sSurgeryType,setSSurgeryType] = useState('');
   const [sProcedure,setSProcedure] = useState('');
   const [sStatus,setSStatus] = useState('');
   const [sSearch,setSSearch] = useState('');
   const [pMonth,setPMonth] = useState(monthNow);
+  const [pDate,setPDate] = useState('');
+  const [pPeriodMode,setPPeriodMode] = useState('month');
   const [pDoctor,setPDoctor] = useState('');
   const [pProcedure,setPProcedure] = useState('');
   const [pStatus,setPStatus] = useState('');
   const [pSearch,setPSearch] = useState('');
   const [dashMonth,setDashMonth] = useState(monthNow);
+  const [dashDate,setDashDate] = useState('');
+  const [dashPeriodMode,setDashPeriodMode] = useState('month');
   const [dashDoctor,setDashDoctor] = useState('');
   const [dashUser,setDashUser] = useState('');
   const [dashStatus,setDashStatus] = useState('');
   const [dashPatient,setDashPatient] = useState('');
   const [finMonth,setFinMonth] = useState(monthNow);
+  const [finDate,setFinDate] = useState('');
+  const [finPeriodMode,setFinPeriodMode] = useState('month');
   const [finDoctor,setFinDoctor] = useState('');
   const [finInsurance,setFinInsurance] = useState('');
   const [finOrigin,setFinOrigin] = useState('');
@@ -1443,14 +1486,19 @@ function App(){
   const [followStatus,setFollowStatus] = useState('');
   const [followSearch,setFollowSearch] = useState('');
   const [dailyDate,setDailyDate] = useState(todayISO());
-  const [dailySource,setDailySource] = useState('');
-  const [dailyStage,setDailyStage] = useState('');
+  const [dailySources,setDailySources] = useState([]);
+  const [dailyStages,setDailyStages] = useState([]);
   const [dailySearch,setDailySearch] = useState('');
+  const [dailyBirthDate,setDailyBirthDate] = useState('');
   const [invoiceDateFrom,setInvoiceDateFrom] = useState('');
   const [invoiceDateTo,setInvoiceDateTo] = useState('');
   const [invoiceSearch,setInvoiceSearch] = useState('');
   const [invoiceSource,setInvoiceSource] = useState('');
   const [invoiceDocumentStatus,setInvoiceDocumentStatus] = useState('');
+  const [promMonth,setPromMonth] = useState(monthNow);
+  const [promDate,setPromDate] = useState('');
+  const [promStatus,setPromStatus] = useState('');
+  const [promSearch,setPromSearch] = useState('');
   const unimedSaved=(()=>{try{return JSON.parse(localStorage.getItem('oc_unimed_step1')||'null')}catch{return null}})();
   const [unimedForm,setUnimedForm] = useState(unimedSaved?.form||{
     patient:'',surgery_date:'',procedure:'',doctor:'',assistant:'',execution_login:'714',start_time:'',end_time:'',seal:'',
@@ -1564,9 +1612,14 @@ function App(){
   },[procedureAutoPrice,pForm.price_manual]);
 
   const currentLaunchName = profile?.full_name?.trim() || session?.user?.email || (profile?.role==='admin'?'ADM':'Usuário');
-  const examLaunchName = currentLaunchName;
-  const surgeryLaunchName = currentLaunchName;
-  const procedureLaunchName = currentLaunchName;
+  const launcherOptionsAll = ['Juliana','Elizângela','Luiza','ADM'];
+  const defaultLaunchName = launcherOptionsAll.includes(currentLaunchName)?currentLaunchName:'ADM';
+  const examLaunchName = String(examForm.launcher||defaultLaunchName||'').trim();
+  const surgeryLaunchName = String(sForm.launcher||defaultLaunchName||'').trim();
+  const procedureLaunchName = String(pForm.launcher||defaultLaunchName||'').trim();
+  useEffect(()=>{if(examModal&&!editingExamId&&!examForm.launcher&&defaultLaunchName)setExamForm(f=>({...f,launcher:defaultLaunchName}));},[examModal,editingExamId,defaultLaunchName]);
+  useEffect(()=>{if(surgeryModal&&!editingSurgeryId&&!sForm.launcher&&defaultLaunchName)setSForm(f=>({...f,launcher:defaultLaunchName}));},[surgeryModal,editingSurgeryId,defaultLaunchName]);
+  useEffect(()=>{if(procedureModal&&!editingProcedureId&&!pForm.launcher&&defaultLaunchName)setPForm(f=>({...f,launcher:defaultLaunchName}));},[procedureModal,editingProcedureId,defaultLaunchName]);
 
   const loadAll = async ()=>{
     setLoading(true);
@@ -1832,8 +1885,19 @@ function App(){
   };
 
   const addExam = async ()=>{
-    if(!examForm.date||!examForm.realization_date||!examForm.patient.trim()||!examForm.indicated_by_doctor_id||!examForm.doctor_id||!examForm.exam_type_ids?.length||!examForm.coverage_choice||!examForm.eye||!examForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, exame(s), convênio/Particular, olho e pagamento.');
+    const missing=[];
+    if(!examForm.date) missing.push('date');
+    if(!examForm.realization_date) missing.push('realization_date');
+    if(!examForm.patient.trim()) missing.push('patient');
+    if(!examForm.indicated_by_doctor_id) missing.push('indicated_by_doctor_id');
+    if(!examForm.doctor_id) missing.push('doctor_id');
+    if(!examForm.exam_type_ids?.length) missing.push('exam_type_ids');
+    if(!examForm.coverage_choice) missing.push('coverage_choice');
+    if(!examForm.eye) missing.push('eye');
+    if(!examForm.payment_confirmed) missing.push('payment_confirmed');
+    if(!examLaunchName) missing.push('launcher');
+    if(missing.length){setValidationErrors('exam',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
+    clearValidationErrors('exam');
     try{
       const patient_id=await getOrCreatePatient(examForm.patient,examForm.whatsapp,examForm.patient_birth_date);
       const launch_group_id=crypto.randomUUID();
@@ -1855,7 +1919,7 @@ function App(){
       if(error) throw error;
       if(examSaved?.length){ const docs=await syncFinancialDocuments(examForm,'exam',launch_group_id); await supabase.from('exams').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setExamModal(false);
-      setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});
+      setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],insurance_id:'',status:'Agendado',launcher:defaultLaunchName,obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){ console.error(e); alert('Não foi possível salvar os exames.'); }
   };
@@ -1894,13 +1958,24 @@ function App(){
       additional_amount:sourceForm.procedure_finance?.[procedureId]?.included===false ? numericValue(sourceForm.procedure_finance?.[procedureId]?.amount) : 0,
       observation:sourceForm.obs||null,
       launched_by:session.user.id,
-      launched_by_name:launcherName
+      launched_by_name:examLaunchName
     }));
   };
 
   const addSurgery = async ()=>{
-    if(!sForm.date||!sForm.scheduled_on||!sForm.patient.trim()||!sForm.indicated_by_doctor_id||!sForm.doctor_id||!sForm.surgery_type_id||!sForm.coverage_choice||!sForm.eye||!sForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, cirurgião, cirurgia, convênio/Particular, olho e pagamento.');
+    const missing=[];
+    if(!sForm.date) missing.push('date');
+    if(!sForm.scheduled_on) missing.push('scheduled_on');
+    if(!sForm.patient.trim()) missing.push('patient');
+    if(!sForm.indicated_by_doctor_id) missing.push('indicated_by_doctor_id');
+    if(!sForm.doctor_id) missing.push('doctor_id');
+    if(!sForm.surgery_type_id) missing.push('surgery_type_id');
+    if(!sForm.coverage_choice) missing.push('coverage_choice');
+    if(!sForm.eye) missing.push('eye');
+    if(!sForm.payment_confirmed) missing.push('payment_confirmed');
+    if(!surgeryLaunchName) missing.push('launcher');
+    if(missing.length){setValidationErrors('surgery',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
+    clearValidationErrors('surgery');
 
     try{
       const patient_id=await getOrCreatePatient(sForm.patient,sForm.whatsapp,sForm.patient_birth_date);
@@ -1964,7 +2039,7 @@ function App(){
       setSForm({
         date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',
         eye:'',insurance_id:'',status:'Solicitação',
-        arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()
+        arrival:'',time:'',payment:'Não informado',launcher:defaultLaunchName,obs:'',...emptyFinanceForm()
       });
       await loadAll();
     }catch(e){
@@ -1986,12 +2061,13 @@ function App(){
       doctor_id:r.doctor_id,
       indicated_by_doctor_id:r.indicatedById||'',
       exam_type_ids:r.exam_type_ids||[],
+      launcher:r.launchedByName||defaultLaunchName,
       insurance_id:r.insurance_id||'',status:r.status,
             obs:r.obs || '',payment_origin:r.payment_origin||financeOrigin(r),total_amount:r.total_amount||'',discount_amount:r.discount_amount||'',received_amount:r.received_amount||'',
       payment_method:r.payment_method||'',installments:String(r.installments||1),financial_status:r.financial_status||'Pendente',payment_confirmed:true,price_manual:true,coverage_choice:r.insurance_id||'__PARTICULAR__',
       expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',invoice_file:null,financial_documents:(r.financial_documents?.length?r.financial_documents:(r.invoice_file_path?[{id:r.invoice_file_path,path:r.invoice_file_path,name:'Documento anexado',type:'',size:0}]:[])),pending_documents:[],removed_document_paths:[],repasses:r.repasses||[]
     });
-    setExamModal(true);
+    clearValidationErrors('exam');setExamModal(true);
   };
 
   const openEditSurgery = r => {
@@ -2005,6 +2081,7 @@ function App(){
       doctor_id:r.doctor_id,
       indicated_by_doctor_id:r.indicatedById||'',
       surgery_type_id:r.surgery_type_id||'',
+      launcher:r.launchedByName||defaultLaunchName,
       procedure_ids:r.procedure_ids||[],
       eye:r.eye || 'Não se aplica',
       insurance_id:r.insurance_id || '',
@@ -2019,7 +2096,7 @@ function App(){
       lio_description:r.lio_description||'',procedure_finance:r.procedure_finance||{},
             obs:r.obs || ''
     });
-    setSurgeryModal(true);
+    clearValidationErrors('surgery');setSurgeryModal(true);
   };
 
   const openEditProcedure = r => {
@@ -2034,6 +2111,7 @@ function App(){
       doctor_id:r.doctor_id,
       indicated_by_doctor_id:r.indicatedById||'',
       procedure_ids:r.procedure_ids?.length?r.procedure_ids:(r.procedure_id?[r.procedure_id]:[]),
+      launcher:r.launchedByName||defaultLaunchName,
       eye:r.eye||'Não se aplica',
       insurance_id:r.insurance_id||'',
       status:r.status||'Solicitação',
@@ -2045,7 +2123,7 @@ function App(){
       billed_amount:r.billed_amount||'',billing_competence:r.billing_competence||'',billing_date:r.billing_date||'',financial_notes:r.financial_notes||'',price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',invoice_file:null,financial_documents:(r.financial_documents?.length?r.financial_documents:(r.invoice_file_path?[{id:r.invoice_file_path,path:r.invoice_file_path,name:'Documento anexado',type:'',size:0}]:[])),pending_documents:[],removed_document_paths:[],repasses:r.repasses||[],
             obs:r.obs||''
     });
-    setProcedureModal(true);
+    clearValidationErrors('procedure');setProcedureModal(true);
   };
 
 
@@ -2186,8 +2264,19 @@ function App(){
   };
 
   const addProcedure = async ()=>{
-    if(!pForm.date||!pForm.realization_date||!pForm.patient.trim()||!pForm.indicated_by_doctor_id||!pForm.doctor_id||!pForm.procedure_ids?.length||!pForm.coverage_choice||!pForm.eye||!pForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, procedimento(s), convênio/Particular, olho e pagamento.');
+    const missing=[];
+    if(!pForm.date) missing.push('date');
+    if(!pForm.realization_date) missing.push('realization_date');
+    if(!pForm.patient.trim()) missing.push('patient');
+    if(!pForm.indicated_by_doctor_id) missing.push('indicated_by_doctor_id');
+    if(!pForm.doctor_id) missing.push('doctor_id');
+    if(!pForm.procedure_ids?.length) missing.push('procedure_ids');
+    if(!pForm.coverage_choice) missing.push('coverage_choice');
+    if(!pForm.eye) missing.push('eye');
+    if(!pForm.payment_confirmed) missing.push('payment_confirmed');
+    if(!procedureLaunchName) missing.push('launcher');
+    if(missing.length){setValidationErrors('procedure',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
+    clearValidationErrors('procedure');
     try{
       const patient_id=await getOrCreatePatient(pForm.patient,pForm.whatsapp,pForm.patient_birth_date);
       const launch_group_id=crypto.randomUUID();
@@ -2230,7 +2319,7 @@ function App(){
       if(error) throw error;
       if(procedureSaved?.length){ const docs=await syncFinancialDocuments(pForm,'procedure',launch_group_id); await supabase.from('procedure_records').update({financial_documents:docs,invoice_file_path:docs[0]?.path||null}).eq('launch_group_id',launch_group_id); }
       setProcedureModal(false);
-      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
+      setPForm({date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',procedure_ids:[],eye:'',insurance_id:'',status:'Solicitação',time:'',payment:'Não informado',launcher:defaultLaunchName,obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2414,24 +2503,26 @@ function App(){
     const q=examSearch.trim().toLowerCase();
     return records.filter(r=>
       (!filterMonth||r.date.startsWith(filterMonth)) &&
+      (!filterDate||r.date===filterDate||r.realization_date===filterDate) &&
       (!filterDoctor||r.doctor_id===filterDoctor) &&
       (!filterExam||r.exam_type_ids?.includes(filterExam)) &&
       (!examStatus||r.status===examStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[records,filterMonth,filterDoctor,filterExam,examStatus,examSearch]);
+  },[records,filterMonth,filterDate,filterDoctor,filterExam,examStatus,examSearch]);
 
   const filteredSurgeries = useMemo(()=>{
     const q=sSearch.trim().toLowerCase();
     return surgeries.filter(r=>
       (!sMonth||r.date.startsWith(sMonth)) &&
+      (!sDate||r.date===sDate||r.scheduled_on===sDate) &&
       (!sDoctor||r.doctor_id===sDoctor) &&
       (!sSurgeryType||r.surgery_type_id===sSurgeryType) &&
       (!sProcedure||r.procedure_ids?.includes(sProcedure)) &&
       (!sStatus||r.status===sStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[surgeries,sMonth,sDoctor,sSurgeryType,sProcedure,sStatus,sSearch]);
+  },[surgeries,sMonth,sDate,sDoctor,sSurgeryType,sProcedure,sStatus,sSearch]);
 
   const procedureLaunchRows = useMemo(()=>groupProcedureRows(procedureRecords),[procedureRecords]);
 
@@ -2440,12 +2531,13 @@ function App(){
     const q=pSearch.trim().toLowerCase();
     return procedureRecords.filter(r=>
       (!pMonth||r.date?.startsWith(pMonth)) &&
+      (!pDate||r.date===pDate||r.realization_date===pDate) &&
       (!pDoctor||r.doctor_id===pDoctor) &&
       (!pProcedure||r.procedure_id===pProcedure) &&
       (!pStatus||r.status===pStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[procedureRecords,pMonth,pDoctor,pProcedure,pStatus,pSearch]);
+  },[procedureRecords,pMonth,pDate,pDoctor,pProcedure,pStatus,pSearch]);
 
   // Visualização agrupada: mesma paciente/pacote/data aparece em UM lançamento.
   // O filtro de procedimento localiza o pacote, mas exibe todos os procedimentos dele.
@@ -2453,12 +2545,13 @@ function App(){
     const q=pSearch.trim().toLowerCase();
     return procedureLaunchRows.filter(r=>
       (!pMonth||r.date?.startsWith(pMonth)) &&
+      (!pDate||r.date===pDate||r.realization_date===pDate) &&
       (!pDoctor||r.doctor_id===pDoctor) &&
       (!pProcedure||r.procedure_ids?.includes(pProcedure)) &&
       (!pStatus||r.status===pStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[procedureLaunchRows,pMonth,pDoctor,pProcedure,pStatus,pSearch]);
+  },[procedureLaunchRows,pMonth,pDate,pDoctor,pProcedure,pStatus,pSearch]);
 
   const deleteFilteredExams = async ()=>{
     if(!filteredExams.length) return alert('Nenhum exame encontrado com os filtros atuais.');
@@ -2560,6 +2653,7 @@ function App(){
     const q=finSearch.trim().toLowerCase();
     return financialRows.filter(r=>
       (!finMonth||r.date?.startsWith(finMonth)) &&
+      (!finDate||r.date===finDate||r.launch_date===finDate||r.realization_date===finDate||r.received_date===finDate) &&
       (!finDoctor||r.doctor_id===finDoctor) &&
       (!finInsurance||r.insurance_id===finInsurance || normalizedBreakdown(r.payment_breakdown).some(x=>x.insurance_id===finInsurance) || (finInsurance==='particular'&&(!r.insurance_id || normalizedBreakdown(r.payment_breakdown).some(x=>x.payer_type==='Particular')))) &&
       (!finOrigin||r.payment_origin===finOrigin || (r.payment_origin==='Misto'&&['Particular','Convênio'].includes(finOrigin))) &&
@@ -2569,7 +2663,7 @@ function App(){
       (!finMethod||r.payment_method===finMethod) &&
       (!q||patientMatchesSearch(r.base_record||r,q)||String(r.service||'').toLowerCase().includes(q))
     );
-  },[financialRows,finMonth,finDoctor,finInsurance,finOrigin,finSource,finOperationalStatus,finStatus,finMethod,finSearch]);
+  },[financialRows,finMonth,finDate,finDoctor,finInsurance,finOrigin,finSource,finOperationalStatus,finStatus,finMethod,finSearch]);
 
   const financeSummary=useMemo(()=>{
     const valid=filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status));
@@ -2600,25 +2694,80 @@ function App(){
     };
   },[financialRows,filteredFinancialRows,finMonth,finDoctor,finOrigin]);
 
+  const promissoryRows=useMemo(()=>financialRows.flatMap(r=>{
+    const breakdown=normalizedBreakdown(r.payment_breakdown);
+    const rows=breakdown.filter(x=>normalizeCatalogLabel(x.method).includes('promissoria'));
+    if(rows.length){
+      return rows.map((x,index)=>{
+        const amount=numericValue(x.amount);
+        const received=x.status==='Recebido'?amount:0;
+        const due=x.expected_date||r.expected_receipt_date||'';
+        const paidDate=x.received_date||r.received_date||'';
+        const overdue=Boolean(due&&x.status!=='Recebido'&&due<todayISO());
+        return {id:`${r.key}:prom:${x.id||index}`,record:r,patient:r.patient,service:r.service,source:r.source,reference_date:r.date,amount,received,balance:Math.max(amount-received,0),installments:Number(x.installments||r.installments||1),due_date:due,received_date:paidDate,status:x.status==='Recebido'?'Pago':overdue?'Vencida':'Em aberto'};
+      });
+    }
+    if(normalizeCatalogLabel(r.payment_method).includes('promissoria')){
+      const amount=numericValue(r.total),received=numericValue(r.received),due=r.expected_receipt_date||'';
+      const overdue=Boolean(due&&received<amount&&due<todayISO());
+      return [{id:`${r.key}:prom:main`,record:r,patient:r.patient,service:r.service,source:r.source,reference_date:r.date,amount,received,balance:Math.max(amount-received,0),installments:Number(r.installments||1),due_date:due,received_date:r.received_date||'',status:received>=amount&&amount>0?'Pago':overdue?'Vencida':received>0?'Parcial':'Em aberto'}];
+    }
+    return [];
+  }),[financialRows]);
+
+  const filteredPromissoryRows=useMemo(()=>{
+    const q=promSearch.trim().toLowerCase();
+    return promissoryRows.filter(r=>
+      (!promMonth||r.reference_date?.startsWith(promMonth)||r.due_date?.startsWith(promMonth)||r.received_date?.startsWith(promMonth)) &&
+      (!promDate||r.reference_date===promDate||r.due_date===promDate||r.received_date===promDate) &&
+      (!promStatus||r.status===promStatus) &&
+      (!q||String(r.patient||'').toLowerCase().includes(q)||String(r.service||'').toLowerCase().includes(q))
+    ).sort((a,b)=>String(a.due_date||a.reference_date||'').localeCompare(String(b.due_date||b.reference_date||'')));
+  },[promissoryRows,promMonth,promDate,promStatus,promSearch]);
+
+  const promissorySummary=useMemo(()=>({
+    total:filteredPromissoryRows.reduce((s,r)=>s+r.amount,0),
+    received:filteredPromissoryRows.reduce((s,r)=>s+r.received,0),
+    balance:filteredPromissoryRows.reduce((s,r)=>s+r.balance,0),
+    overdue:filteredPromissoryRows.filter(r=>r.status==='Vencida').reduce((s,r)=>s+r.balance,0)
+  }),[filteredPromissoryRows]);
+
+  const openPromissoryRecord=row=>{const r=row.record;if(r.source_type==='exam'){openEditExam(r.base_record);return;}if(r.source_type==='surgery'){openEditSurgery(r.base_record);return;}if(r.source_type==='procedure'){openEditProcedure(r.base_record);return;}};
+
+  const exportPromissoryWord=()=>{
+    const rows=filteredPromissoryRows.map(r=>`<tr><td>${brDate(r.reference_date)}</td><td>${String(r.patient||'')}</td><td>${String(r.service||'')}</td><td>${moneyBR(r.amount)}</td><td>${r.installments}x</td><td>${r.due_date?brDate(r.due_date):'—'}</td><td>${r.status}</td><td>${moneyBR(r.received)}</td><td>${moneyBR(r.balance)}</td></tr>`).join('');
+    const html=`<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#24343d}h1{font-size:22px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #ccd6da;padding:6px;text-align:left}th{background:#edf4f1}</style></head><body><h1>OftalmoCastro — Controle de Promissórias</h1><p>Período: ${promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos')} • ${filteredPromissoryRows.length} registro(s)</p><p>Total: <b>${moneyBR(promissorySummary.total)}</b> • Recebido: <b>${moneyBR(promissorySummary.received)}</b> • Saldo: <b>${moneyBR(promissorySummary.balance)}</b> • Vencido: <b>${moneyBR(promissorySummary.overdue)}</b></p><table><thead><tr><th>Data</th><th>Paciente</th><th>Serviço</th><th>Valor</th><th>Parcelas</th><th>Vencimento</th><th>Situação</th><th>Recebido</th><th>Saldo</th></tr></thead><tbody>${rows||'<tr><td colspan="9">Sem registros.</td></tr>'}</tbody></table></body></html>`;
+    const blob=new Blob(['\ufeff',html],{type:'application/msword'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.doc`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+
+  const exportPromissoryPdf=()=>{
+    const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});const margin=10;let y=12;pdf.setFont('helvetica','bold');pdf.setFontSize(16);pdf.text('OftalmoCastro - Controle de Promissorias',margin,y);y+=7;pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.text(`Periodo: ${promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos')} | Registros: ${filteredPromissoryRows.length}`,margin,y);y+=5;pdf.text(`Total: ${moneyBR(promissorySummary.total)} | Recebido: ${moneyBR(promissorySummary.received)} | Saldo: ${moneyBR(promissorySummary.balance)} | Vencido: ${moneyBR(promissorySummary.overdue)}`,margin,y);y+=7;
+    const widths=[18,42,55,24,16,24,22,24,24],headers=['Data','Paciente','Servico','Valor','Parc.','Vencimento','Situacao','Recebido','Saldo'];const drawRow=(vals,bold=false)=>{let x=margin;pdf.setFont('helvetica',bold?'bold':'normal');vals.forEach((v,i)=>{const w=widths[i];pdf.rect(x,y-4,w,7);pdf.text(String(v??'').slice(0,i===2?38:i===1?27:18),x+1.5,y);x+=w;});y+=7;};drawRow(headers,true);filteredPromissoryRows.forEach(r=>{if(y>190){pdf.addPage();y=14;drawRow(headers,true);}drawRow([brDate(r.reference_date),r.patient,r.service,moneyBR(r.amount),`${r.installments}x`,r.due_date?brDate(r.due_date):'—',r.status,moneyBR(r.received),moneyBR(r.balance)]);});pdf.save(`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.pdf`);
+  };
+
+  const toggleDailyFilter=(current,value,setter)=>setter(current.includes(value)?current.filter(x=>x!==value):[...current,value]);
+
   const dailyReportRows = useMemo(()=>{
     const q=dailySearch.trim().toLowerCase();
     const examRows=records.map(r=>({...r,report_type:'Exame',report_source:'exam',service_name:r.exam}));
     const surgeryRows=surgeries.map(r=>({...r,report_type:'Cirurgia',report_source:'surgery',service_name:r.surgery_type}));
     const procedureRows=procedureLaunchRows.map(r=>({...r,report_type:'Procedimento',report_source:'procedure',service_name:r.procedure}));
     return [...examRows,...surgeryRows,...procedureRows]
-      .filter(r=>(!dailySource||r.report_source===dailySource))
+      .filter(r=>!dailySources.length||dailySources.includes(r.report_source))
+      .filter(r=>!dailyBirthDate||r.patient_birth_date===dailyBirthDate)
       .filter(r=>!q||patientMatchesSearch(r,q)||String(r.service_name||'').toLowerCase().includes(q))
       .filter(r=>{
         const status=String(r.status||'').toLowerCase();
         const realized=status.includes('realiz');
         const canceled=status.includes('cancel');
         const realizationDate=r.report_source==='surgery'?(r.scheduled_on||r.date):(r.realization_date||r.date);
-        if(dailyStage==='realizado') return realized && (!dailyDate||realizationDate===dailyDate);
-        if(dailyStage==='lancado') return !realized && !canceled && (!dailyDate||r.date===dailyDate);
-        return !dailyDate || r.date===dailyDate || (realized&&realizationDate===dailyDate);
+        const stage=realized?'realizado':canceled?'cancelado':'lancado';
+        if(dailyStages.length&&!dailyStages.includes(stage)) return false;
+        if(!dailyDate) return true;
+        return stage==='realizado'?realizationDate===dailyDate:r.date===dailyDate;
       })
       .sort((a,b)=>String(a.patient||'').localeCompare(String(b.patient||''),'pt-BR'));
-  },[records,surgeries,procedureLaunchRows,dailyDate,dailySource,dailyStage,dailySearch]);
+  },[records,surgeries,procedureLaunchRows,dailyDate,dailySources,dailyStages,dailySearch,dailyBirthDate]);
 
   const openDailyReportEdit = row=>{
     if(row.report_source==='exam'){
@@ -2780,7 +2929,7 @@ function App(){
         .item p{margin:2.5pt 0}.footer{margin-top:18pt;color:#74838c;font-size:8.5pt}
       </style></head><body>
         <h1>${escapeWordHtml(title)}</h1>
-        <p class="meta">${dailyReportRows.length} registro(s) • Tipo: ${escapeWordHtml(dailySource||'Todos')} • Situação: ${escapeWordHtml(dailyStage||'Todos')}</p>
+        <p class="meta">${dailyReportRows.length} registro(s) • Tipo: ${escapeWordHtml(dailySources.length?dailySources.map(x=>x==='exam'?'Exames':x==='surgery'?'Cirurgias':'Procedimentos').join(', '):'Todos')} • Situação: ${escapeWordHtml(dailyStages.length?dailyStages.map(x=>x==='realizado'?'Realizados':x==='cancelado'?'Cancelados':'Lançados / agendados').join(', '):'Todos')}</p>
         ${rowsHtml}
         <p class="footer">Gerado pelo sistema OftalmoCastro em ${escapeWordHtml(new Date().toLocaleString('pt-BR'))}.</p>
       </body></html>`;
@@ -2911,12 +3060,14 @@ function App(){
     const q=dashPatient.trim().toLowerCase();
     return records.filter(r=>
       (!dashMonth||r.date.startsWith(dashMonth)) &&
+      (!dashDate||r.date===dashDate||r.scheduled_on===dashDate) &&
+      (!dashDate||r.date===dashDate||r.realization_date===dashDate) &&
       (!dashDoctor||r.doctor_id===dashDoctor) &&
       (!dashUser||r.launchedByName===dashUser) &&
       (!dashStatus||r.status===dashStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[records,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
+  },[records,dashMonth,dashDate,dashDoctor,dashUser,dashStatus,dashPatient]);
 
   const dashboardSurgeries = useMemo(()=>{
     const q=dashPatient.trim().toLowerCase();
@@ -2927,18 +3078,19 @@ function App(){
       (!dashStatus||r.status===dashStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[surgeries,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
+  },[surgeries,dashMonth,dashDate,dashDoctor,dashUser,dashStatus,dashPatient]);
 
   const dashboardProcedures = useMemo(()=>{
     const q=dashPatient.trim().toLowerCase();
     return procedureRecords.filter(r=>
       (!dashMonth||r.date?.startsWith(dashMonth)) &&
+      (!dashDate||r.date===dashDate||r.realization_date===dashDate) &&
       (!dashDoctor||r.doctor_id===dashDoctor) &&
       (!dashUser||r.launchedByName===dashUser) &&
       (!dashStatus||r.status===dashStatus) &&
       patientMatchesSearch(r,q)
     );
-  },[procedureRecords,dashMonth,dashDoctor,dashUser,dashStatus,dashPatient]);
+  },[procedureRecords,dashMonth,dashDate,dashDoctor,dashUser,dashStatus,dashPatient]);
 
   const launchedName = record => record.launchedByName || (profiles.find(p=>p.id===record.launchedBy)?.role==='admin' ? 'ADM' : 'Orientadora');
 
@@ -5392,13 +5544,14 @@ function App(){
         <button className={page==='procedimentos'?'active':''} onClick={()=>setPage('procedimentos')}><ClipboardList className="nav-icon" size={18}/><span>Procedimentos</span></button>
         <button className={page==='followup'?'active':''} onClick={()=>setPage('followup')}><RefreshCw className="nav-icon" size={18}/><span>Follow-up</span></button>
         <button className={page==='resultados'?'active':''} onClick={()=>setPage('resultados')}><BarChart3 className="nav-icon" size={18}/><span>Resultados</span></button>
-        <div className={`nav-finance-group ${['financeiro','relatorio-diario','tarefas-pops'].includes(page)?'open active':''}`}>
-          <button className={['financeiro','relatorio-diario','tarefas-pops'].includes(page)?'active':''} onClick={()=>setPage('financeiro')} aria-haspopup="true">
+        <div className={`nav-finance-group ${['financeiro','relatorio-diario','promissorias','tarefas-pops'].includes(page)?'open active':''}`}>
+          <button className={['financeiro','relatorio-diario','promissorias','tarefas-pops'].includes(page)?'active':''} onClick={()=>setPage('financeiro')} aria-haspopup="true">
             <span className="nav-finance-main"><WalletCards className="nav-icon" size={18}/><span>Financeiro</span></span><ChevronRight className="nav-chevron-icon" size={17}/>
           </button>
           <div className="nav-finance-submenu">
             <button className={page==='financeiro'?'active':''} onClick={()=>setPage('financeiro')}><LayoutDashboard size={16}/><span>Visão geral</span></button>
             <button className={page==='relatorio-diario'?'active':''} onClick={()=>setPage('relatorio-diario')}><CalendarDays size={16}/><span>Relatório diário</span></button>
+            <button className={page==='promissorias'?'active':''} onClick={()=>setPage('promissorias')}><FileText size={16}/><span>Controle de Promissórias</span></button>
             <button className={page==='tarefas-pops'?'active':''} onClick={()=>setPage('tarefas-pops')}><ListChecks size={16}/><span>Tarefas e POPs</span></button>
           </div>
         </div>
@@ -5414,7 +5567,7 @@ function App(){
           <div><div className="eyebrow">GESTÃO OPERACIONAL</div><h1>Controle mensal de exames</h1><div className="subtitle">Dados compartilhados entre os usuários da clínica.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});setExamModal(true)}}><Plus size={16}/> Novo exame</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingExamId(null);setExamForm({date:todayISO(),realization_date:'',eye:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',obs:'',...emptyFinanceForm()});clearValidationErrors('exam');setExamModal(true)}}><Plus size={16}/> Novo exame</button>
           </div>
         </div>
         <div className="kpis">
@@ -5426,12 +5579,12 @@ function App(){
         </div>
         <div className="card">
           <div className="filters">
-            <input type="month" value={filterMonth} onChange={e=>setFilterMonth(e.target.value)}/>
+            <PeriodFilter mode={filterPeriodMode} setMode={setFilterPeriodMode} month={filterMonth} setMonth={setFilterMonth} date={filterDate} setDate={setFilterDate}/>
             <Select value={filterDoctor} setValue={setFilterDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={filterExam} setValue={setFilterExam} options={examTypes} first="Todos os exames"/>
             <Select value={examStatus} setValue={setExamStatus} options={['Agendado','Pendente','Realizado','Cancelado']} first="Todos os status"/>
             <input className="patient-search-input" value={examSearch} onChange={e=>setExamSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nos exames"/>
-            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDoctor('');setFilterExam('');setExamStatus('');setExamSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFilterMonth('');setFilterDate('');setFilterPeriodMode('month');setFilterDoctor('');setFilterExam('');setExamStatus('');setExamSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredExams}
@@ -5465,13 +5618,13 @@ function App(){
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
         <div className="card">
           <div className="filters">
-            <input type="month" value={sMonth} onChange={e=>setSMonth(e.target.value)}/>
+            <PeriodFilter mode={sPeriodMode} setMode={setSPeriodMode} month={sMonth} setMonth={setSMonth} date={sDate} setDate={setSDate}/>
             <Select value={sDoctor} setValue={setSDoctor} options={doctors} first="Todos os cirurgiões"/>
             <Select value={sSurgeryType} setValue={setSSurgeryType} options={surgeryTypes} first="Todas as cirurgias"/>
             <Select value={sProcedure} setValue={setSProcedure} options={procedureOptions} first="Todos os procedimentos vinculados"/>
             <Select value={sStatus} setValue={setSStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
             <input className="patient-search-input" value={sSearch} onChange={e=>setSSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nas cirurgias"/>
-            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDoctor('');setSSurgeryType('');setSProcedure('');setSStatus('');setSSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setSMonth('');setSDate('');setSPeriodMode('month');setSDoctor('');setSSurgeryType('');setSProcedure('');setSStatus('');setSSearch('')}}>Limpar</button>
             <button
               className="btn btn-danger-soft bulk-delete-btn"
               onClick={deleteFilteredSurgeries}
@@ -5523,12 +5676,12 @@ function App(){
 
         <div className="card">
           <div className="filters">
-            <input type="month" value={pMonth} onChange={e=>setPMonth(e.target.value)}/>
+            <PeriodFilter mode={pPeriodMode} setMode={setPPeriodMode} month={pMonth} setMonth={setPMonth} date={pDate} setDate={setPDate}/>
             <Select value={pDoctor} setValue={setPDoctor} options={doctors} first="Todos os médicos"/>
             <Select value={pProcedure} setValue={setPProcedure} options={procedureOptions} first="Todos os procedimentos"/>
             <Select value={pStatus} setValue={setPStatus} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
             <input className="patient-search-input" value={pSearch} onChange={e=>setPSearch(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nos procedimentos"/>
-            <button className="btn btn-light" onClick={()=>{setPMonth('');setPDoctor('');setPProcedure('');setPStatus('');setPSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setPMonth('');setPDate('');setPPeriodMode('month');setPDoctor('');setPProcedure('');setPStatus('');setPSearch('')}}>Limpar</button>
             <button className="btn btn-danger-soft bulk-delete-btn" onClick={deleteFilteredProcedures} disabled={!filteredProcedures.length}>
               <Trash2 size={15}/> Excluir filtrados ({filteredProcedures.length})
             </button>
@@ -5671,10 +5824,15 @@ function App(){
         <div className="card daily-report-toolbar">
           <div className="filters daily-report-filters">
             <Field label="Data"><input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)}/></Field>
-            <Field label="Tipo"><Select value={dailySource} setValue={setDailySource} options={[{id:'exam',name:'Exames'},{id:'surgery',name:'Cirurgias'},{id:'procedure',name:'Procedimentos'}]} first="Todos"/></Field>
-            <Field label="Situação"><Select value={dailyStage} setValue={setDailyStage} options={[{id:'lancado',name:'Lançados / agendados'},{id:'realizado',name:'Realizados'}]} first="Todos"/></Field>
-            <Field label="Paciente"><input value={dailySearch} onChange={e=>setDailySearch(e.target.value)} placeholder="Buscar pelo nome"/></Field>
-            <button className="btn btn-light" onClick={()=>{setDailyDate(todayISO());setDailySource('');setDailyStage('');setDailySearch('')}}>Hoje / limpar filtros</button>
+            <Field label="Nascimento"><input type="date" value={dailyBirthDate} onChange={e=>setDailyBirthDate(e.target.value)}/></Field>
+            <Field label="Paciente"><input value={dailySearch} onChange={e=>setDailySearch(e.target.value)} placeholder="Nome ou nascimento"/></Field>
+            <div className="full filter-check-section"><label>Tipo</label><div className="filter-check-grid">
+              {[['exam','Exames'],['surgery','Cirurgias'],['procedure','Procedimentos']].map(([id,label])=><button type="button" key={id} className={`filter-check ${dailySources.includes(id)?'selected':''}`} onClick={()=>toggleDailyFilter(dailySources,id,setDailySources)}><span>{dailySources.includes(id)?'✓':''}</span>{label}</button>)}
+            </div></div>
+            <div className="full filter-check-section"><label>Situação</label><div className="filter-check-grid">
+              {[['lancado','Lançados / agendados'],['realizado','Realizados'],['cancelado','Cancelados']].map(([id,label])=><button type="button" key={id} className={`filter-check ${dailyStages.includes(id)?'selected':''}`} onClick={()=>toggleDailyFilter(dailyStages,id,setDailyStages)}><span>{dailyStages.includes(id)?'✓':''}</span>{label}</button>)}
+            </div></div>
+            <button className="btn btn-light" onClick={()=>{setDailyDate(todayISO());setDailySources([]);setDailyStages([]);setDailySearch('');setDailyBirthDate('')}}>Hoje / limpar filtros</button>
           </div>
         </div>
         <div className="card daily-report-sheet" ref={dailyReportRef}>
@@ -5723,13 +5881,13 @@ function App(){
           <div className="card results-toolbar">
             <div className="filter-title">Filtros do relatório</div>
             <div className="filters results-filters">
-              <input type="month" value={dashMonth} onChange={e=>setDashMonth(e.target.value)}/>
+              <PeriodFilter mode={dashPeriodMode} setMode={setDashPeriodMode} month={dashMonth} setMonth={setDashMonth} date={dashDate} setDate={setDashDate}/>
               <Select value={dashDoctor} setValue={setDashDoctor} options={doctors} first="Todos os médicos"/>
               <Select value={dashUser} setValue={setDashUser} options={['Juliana','Luiza','Elisangela','ADM']} first="Todos os responsáveis"/>
               <Select value={dashStatus} setValue={setDashStatus} options={['Agendado','Realizado','Cancelado','Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']} first="Todos os status"/>
               <input className="patient-search-input" value={dashPatient} onChange={e=>setDashPatient(e.target.value)} placeholder="Buscar nome ou data de nascimento" aria-label="Buscar paciente por nome ou nascimento nos resultados"/>
             </div>
-            <div className="active-period">Período analisado: <b>{monthLabel(dashMonth)}</b></div>
+            <div className="active-period">Período analisado: <b>{dashDate?brDate(dashDate):monthLabel(dashMonth)}</b></div>
           </div>
 
           <div className="analysis-grid results-kpis">
@@ -6024,7 +6182,7 @@ function App(){
         <div className="card finance-filter-card">
           <div className="filter-title">Filtros financeiros</div>
           <div className="finance-filters">
-            <input type="month" value={finMonth} onChange={e=>setFinMonth(e.target.value)}/>
+            <PeriodFilter mode={finPeriodMode} setMode={setFinPeriodMode} month={finMonth} setMonth={setFinMonth} date={finDate} setDate={setFinDate}/>
             <Select value={finDoctor} setValue={setFinDoctor} options={doctors} first="Todos os médicos"/>
             <select value={finInsurance} onChange={e=>setFinInsurance(e.target.value)}><option value="">Todos os convênios</option><option value="particular">Particular</option>{insurances.map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select>
             <Select value={finOrigin} setValue={setFinOrigin} options={['Particular','Convênio','Misto']} first="Todas as origens"/>
@@ -6033,7 +6191,7 @@ function App(){
             <Select value={finStatus} setValue={setFinStatus} options={[{id:'paid',name:'Pago'},{id:'partial',name:'Pago parcial'},{id:'unpaid',name:'Não pago'}]} first="Todos os pagamentos"/>
             <Select value={finMethod} setValue={setFinMethod} options={['PIX','Dinheiro','Débito','Crédito','Crédito parcelado','Boleto','Transferência','Convênio','Múltiplos']} first="Todas as formas de pagamento"/>
             <input value={finSearch} onChange={e=>setFinSearch(e.target.value)} placeholder="Buscar paciente, nascimento ou serviço"/>
-            <button className="btn btn-light" onClick={()=>{setFinMonth('');setFinDoctor('');setFinInsurance('');setFinOrigin('');setFinSource('');setFinOperationalStatus('');setFinStatus('');setFinMethod('');setFinSearch('')}}>Limpar</button>
+            <button className="btn btn-light" onClick={()=>{setFinMonth('');setFinDate('');setFinPeriodMode('month');setFinDoctor('');setFinInsurance('');setFinOrigin('');setFinSource('');setFinOperationalStatus('');setFinStatus('');setFinMethod('');setFinSearch('')}}>Limpar</button>
           </div>
         </div>
 
@@ -6107,6 +6265,13 @@ function App(){
         </div>
       </section>}
 
+
+      {page==='promissorias'&&<section className="promissory-page finance-page">
+        <div className="topbar finance-topbar"><div><div className="eyebrow">GESTÃO FINANCEIRA</div><h1>Controle de Promissórias</h1><div className="subtitle">Acompanhe promissórias em aberto, pagas e vencidas a partir dos pagamentos registrados em Exames, Cirurgias e Procedimentos.</div></div><div className="top-actions"><button className="btn btn-light" onClick={exportPromissoryWord}><FileText size={16}/> Exportar Word</button><button className="btn btn-primary" onClick={exportPromissoryPdf}><FileDown size={16}/> Gerar PDF</button></div></div>
+        <div className="card finance-filter-card"><div className="filter-title">Filtros das promissórias</div><div className="finance-filters promissory-filters"><input type="month" value={promMonth} onChange={e=>setPromMonth(e.target.value)}/><input type="date" value={promDate} onChange={e=>{setPromDate(e.target.value);if(e.target.value)setPromMonth(e.target.value.slice(0,7))}} title="Filtrar por dia, vencimento ou pagamento"/><input value={promSearch} onChange={e=>setPromSearch(e.target.value)} placeholder="Buscar paciente ou serviço"/><Select value={promStatus} setValue={setPromStatus} options={['Em aberto','Parcial','Vencida','Pago']} first="Todas as situações"/><button className="btn btn-light" onClick={()=>{setPromMonth('');setPromDate('');setPromStatus('');setPromSearch('')}}>Limpar</button></div></div>
+        <div className="finance-kpis promissory-kpis"><div className="finance-kpi primary"><span>Total em promissórias</span><strong>{moneyBR(promissorySummary.total)}</strong><small>{filteredPromissoryRows.length} registro(s)</small></div><div className="finance-kpi success"><span>Recebido</span><strong>{moneyBR(promissorySummary.received)}</strong><small>Valores quitados/recebidos</small></div><div className="finance-kpi warning"><span>Saldo em aberto</span><strong>{moneyBR(promissorySummary.balance)}</strong><small>Valor ainda a receber</small></div><div className="finance-kpi danger"><span>Vencido</span><strong>{moneyBR(promissorySummary.overdue)}</strong><small>Promissórias vencidas ainda abertas</small></div></div>
+        <div className="card finance-detail-card"><div className="section-title"><div><h2>Promissórias</h2><p className="finance-detail-subtitle">Os dados vêm diretamente das formas de pagamento dos lançamentos. Para corrigir valor, vencimento ou situação, abra o lançamento original.</p></div></div><div className="table-wrap"><table className="finance-table"><thead><tr><th>Data</th><th>Paciente</th><th>Origem</th><th>Serviço</th><th>Valor</th><th>Parcelas</th><th>Vencimento</th><th>Situação</th><th>Recebido</th><th>Saldo</th><th>Ação</th></tr></thead><tbody>{filteredPromissoryRows.length?filteredPromissoryRows.map(r=><tr key={r.id}><td>{brDate(r.reference_date)}</td><td><b>{r.patient}</b></td><td>{r.source}</td><td>{r.service}</td><td><b>{moneyBR(r.amount)}</b></td><td>{r.installments}x</td><td>{r.due_date?brDate(r.due_date):'—'}</td><td><span className={`promissory-status ${r.status==='Pago'?'paid':r.status==='Vencida'?'overdue':r.status==='Parcial'?'partial':'open'}`}>{r.status}</span></td><td>{moneyBR(r.received)}</td><td><b>{moneyBR(r.balance)}</b></td><td><button className="btn btn-edit-soft" onClick={()=>openPromissoryRecord(r)}>Abrir lançamento</button></td></tr>):<tr><td colSpan="11" className="empty">Nenhuma promissória encontrada com os filtros atuais.</td></tr>}</tbody></table></div></div>
+      </section>}
 
       {page==='tarefas-pops'&&<TasksPopsPanel profile={profile} session={session}/>}
 
@@ -6229,6 +6394,14 @@ function App(){
             <div className="manual-number">06</div>
             <h3>Editar informações</h3>
             <p>Na tabela de Exames, Cirurgias ou Procedimentos, ou diretamente no <b>Relatório diário</b>, clique em <b>Editar</b>. O mesmo formulário completo do lançamento será aberto. É possível corrigir atendimento, convênio, valores, <b>Pago / Pago parcial / Não pago</b>, forma de pagamento, parcelas, documentos e repasses. Ao salvar, a alteração também atualiza a <b>Visão geral do Financeiro</b>.</p>
+            <h3>Filtro de período</h3>
+            <p>Exames, Cirurgias, Procedimentos, Resultados e Financeiro usam um único controle de período. Escolha <b>Mês</b> ou <b>Data</b> no próprio campo e depois informe o período desejado.</p>
+            <h3>Validação dos lançamentos</h3>
+            <p>Nos novos lançamentos de Exames, Cirurgias e Procedimentos, <b>Quem está lançando?</b> voltou a aparecer dentro do formulário. Se alguém tentar salvar sem preencher um campo obrigatório, o sistema exibe um aviso visual e destaca em vermelho os campos que precisam de atenção.</p>
+            <h3>Relatório diário</h3>
+            <p>No Relatório diário, <b>Tipo</b> e <b>Situação</b> aparecem em caixinhas selecionáveis. É possível marcar uma ou várias opções; as selecionadas ficam destacadas em verde. Também existe filtro específico pela <b>data de nascimento</b> do paciente.</p>
+            <h3>Controle de Promissórias</h3>
+            <p>No submenu <b>Financeiro → Controle de Promissórias</b>, o sistema reúne automaticamente os pagamentos registrados como Promissória. É possível filtrar por mês, dia, paciente, serviço e situação, acompanhar total, recebido, saldo e vencidos, abrir o lançamento original e exportar o relatório em Word ou PDF.</p>
           </article>
 
           <article className="card manual-card">
@@ -7151,24 +7324,26 @@ function App(){
     `}</style>
 
     <Modal open={examModal} onClose={closeExamModal} title={editingExamId?'Editar exame':'Novo exame'} subtitle="Lançamento simplificado: atendimento, financeiro e repasses." onSave={editingExamId?updateExam:addExam} saveText={editingExamId?'Salvar alterações':'Salvar exame'}>
-      <div className="form-grid simplified-form-grid">
+      <div className="form-grid simplified-form-grid" data-validation-scope="exam">
+        {formErrors.exam?.message&&<div className="form-validation-banner full"><strong>Faltam informações obrigatórias</strong><span>{formErrors.exam.message} Os campos destacados em vermelho precisam ser preenchidos.</span></div>}
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO ATENDIMENTO</b><small>Informações clínicas e operacionais principais.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento *"><input required type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização *"><input required type="date" value={examForm.realization_date||''} onChange={e=>setExamForm({...examForm,realization_date:e.target.value})}/></Field>
-            <Field label="Paciente *"><input required value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field>
+            <div className={fieldError('exam','launcher')?'field-error':''}><Field label="Quem está lançando? *"><Select value={examForm.launcher||currentLaunchName||''} setValue={v=>setExamForm({...examForm,launcher:v})} options={launcherOptionsAll} first="Selecione"/></Field></div>
+            <div className={fieldError('exam','date')?'field-error':''}><Field label="Data do agendamento *"><input required type="date" value={examForm.date} onChange={e=>setExamForm({...examForm,date:e.target.value})}/></Field></div>
+            <div className={fieldError('exam','realization_date')?'field-error':''}><Field label="Data da realização *"><input required type="date" value={examForm.realization_date||''} onChange={e=>setExamForm({...examForm,realization_date:e.target.value})}/></Field></div>
+            <div className={fieldError('exam','patient')?'field-error':''}><Field label="Paciente *"><input required value={examForm.patient} onChange={e=>setExamForm({...examForm,patient:e.target.value})}/></Field></div>
             <Field label="Data de nascimento"><input type="date" value={examForm.patient_birth_date||''} onChange={e=>setExamForm({...examForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio / Particular *"><Select value={examForm.coverage_choice||''} setValue={v=>setExamForm({...examForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
-            <Field label="Olho *"><Select value={examForm.eye||''} setValue={v=>setExamForm({...examForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
-            <Field label="Médico que indicou *"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
-            <Field label="Médico que realizou / realizará *"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <div className={fieldError('exam','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={examForm.coverage_choice||''} setValue={v=>setExamForm({...examForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
+            <div className={fieldError('exam','eye')?'field-error':''}><Field label="Olho *"><Select value={examForm.eye||''} setValue={v=>setExamForm({...examForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
+            <div className={fieldError('exam','indicated_by_doctor_id')?'field-error':''}><Field label="Médico que indicou *"><Select value={examForm.indicated_by_doctor_id||''} setValue={v=>setExamForm({...examForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
+            <div className={fieldError('exam','doctor_id')?'field-error':''}><Field label="Médico que realizou / realizará *"><Select value={examForm.doctor_id} setValue={v=>setExamForm({...examForm,doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
             <Field label="Status"><Select value={examForm.status} setValue={v=>setExamForm({...examForm,status:v})} options={['Agendado','Pendente','Realizado','Cancelado']}/></Field>
-            <Field label={editingExamId ? "Exame *" : "Exames *"} full>
+            <div className={fieldError('exam','exam_type_ids')?'field-error full':'full'}><Field label={editingExamId ? "Exame *" : "Exames *"} full>
               <div className="exam-multi-select"><div className="exam-multi-head"><span>Selecione um ou vários exames</span><b>{examForm.exam_type_ids?.length||0} selecionado(s)</b></div><div className="exam-options">
                 {examTypes.map(exam=>{const checked=examForm.exam_type_ids?.includes(exam.id);return <label key={exam.id} className={`exam-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=examForm.exam_type_ids||[];setExamForm({...examForm,exam_type_ids:checked?ids.filter(id=>id!==exam.id):[...ids,exam.id],price_manual:false});}}/><span>{exam.name}</span></label>;})}
               </div></div>
-            </Field>
+            </Field></div>
           </div>
         </div>
 
@@ -7177,7 +7352,7 @@ function App(){
           <div className="form-section-grid finance-simple-grid">
             <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value,price_manual:true})}/><small>{examForm.price_manual?'Valor ajustado manualmente.':examAutoPrice?`Prévia automática pela tabela: ${examAutoPrice.labels.join(' + ')}.`:'Selecione o atendimento. Antes de escolher convênio/Particular, a prévia usa o valor Particular e recalcula automaticamente depois.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={examForm.discount_amount||''} onChange={e=>setExamForm({...examForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={examForm} setForm={setExamForm}/>
+            <div className={fieldError('exam','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={examForm} setForm={setExamForm}/></div>
             <PaymentBreakdownEditor form={examForm} setForm={setExamForm} insurances={insurances}/>
             <Field label="Nota fiscal / comprovante nº"><input value={examForm.invoice_number||''} onChange={e=>setExamForm({...examForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={examForm.invoice_issued_date||''} onChange={e=>setExamForm({...examForm,invoice_issued_date:e.target.value})}/></Field>
@@ -7349,20 +7524,22 @@ function App(){
     `}</style>
 
     <Modal open={surgeryModal} onClose={closeSurgeryModal} title={editingSurgeryId?'Editar cirurgia':'Nova cirurgia'} subtitle="Agendamento e data de realização separados, com financeiro e repasses." onSave={editingSurgeryId?updateSurgery:addSurgery} saveText={editingSurgeryId?'Salvar alterações':'Salvar cirurgia'}>
-      <div className="form-grid simplified-form-grid">
+      <div className="form-grid simplified-form-grid" data-validation-scope="surgery">
+        {formErrors.surgery?.message&&<div className="form-validation-banner full"><strong>Faltam informações obrigatórias</strong><span>{formErrors.surgery.message} Os campos destacados em vermelho precisam ser preenchidos.</span></div>}
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DA CIRURGIA</b><small>Informações principais para identificação e acompanhamento.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento *"><input required type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização *"><input required type="date" value={sForm.scheduled_on||''} onChange={e=>setSForm({...sForm,scheduled_on:e.target.value})}/></Field>
-            <Field label="Paciente *"><input required value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field>
+            <div className={fieldError('surgery','launcher')?'field-error':''}><Field label="Quem está lançando? *"><Select value={sForm.launcher||currentLaunchName||''} setValue={v=>setSForm({...sForm,launcher:v})} options={launcherOptionsAll} first="Selecione"/></Field></div>
+            <div className={fieldError('surgery','date')?'field-error':''}><Field label="Data do agendamento *"><input required type="date" value={sForm.date} onChange={e=>setSForm({...sForm,date:e.target.value})}/></Field></div>
+            <div className={fieldError('surgery','scheduled_on')?'field-error':''}><Field label="Data da realização *"><input required type="date" value={sForm.scheduled_on||''} onChange={e=>setSForm({...sForm,scheduled_on:e.target.value})}/></Field></div>
+            <div className={fieldError('surgery','patient')?'field-error':''}><Field label="Paciente *"><input required value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field></div>
             <Field label="Data de nascimento"><input type="date" value={sForm.patient_birth_date||''} onChange={e=>setSForm({...sForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio / Particular *"><Select value={sForm.coverage_choice||''} setValue={v=>setSForm({...sForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
+            <div className={fieldError('surgery','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={sForm.coverage_choice||''} setValue={v=>setSForm({...sForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
             <Field label="Cirurgia *"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v,price_manual:false})} options={surgeryTypes} first="Selecione a cirurgia"/></Field>
             <Field label="LIO / lente (quando aplicável)"><input value={sForm.lio_description||''} onChange={e=>setSForm({...sForm,lio_description:e.target.value,price_manual:false})} placeholder="Ex.: Asférica / Trifocal / Mono Tórica"/></Field>
-            <Field label="Olho *"><Select value={sForm.eye||''} setValue={v=>setSForm({...sForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
+            <div className={fieldError('surgery','eye')?'field-error':''}><Field label="Olho *"><Select value={sForm.eye||''} setValue={v=>setSForm({...sForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
             <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-            <Field label="Médico que indicou *"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
+            <div className={fieldError('surgery','indicated_by_doctor_id')?'field-error':''}><Field label="Médico que indicou *"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
             <Field label="Cirurgião que realizou / realizará *"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
             <Field label="Procedimentos vinculados (opcional)" full>
               <div className="procedure-multi-select"><div className="procedure-multi-head"><span>Selecione apenas os procedimentos que pertencem a este pacote</span><b>{sForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">
@@ -7377,7 +7554,7 @@ function App(){
           <div className="form-section-grid finance-simple-grid">
             <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value,price_manual:true})} placeholder="0,00"/><small>{sForm.price_manual?'Valor ajustado manualmente.':surgeryAutoPrice?`Prévia automática pela tabela: ${surgeryAutoPrice.labels.join(' + ')}${(sForm.procedure_ids||[]).some(id=>sForm.procedure_finance?.[id]?.included===false)?' + adicionais dos procedimentos':''}.`:'Selecione a cirurgia. A prévia começa pela tabela Particular e recalcula ao escolher convênio, olho e lente quando aplicável.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={sForm.discount_amount||''} onChange={e=>setSForm({...sForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={sForm} setForm={setSForm}/>
+            <div className={fieldError('surgery','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={sForm} setForm={setSForm}/></div>
             <PaymentBreakdownEditor form={sForm} setForm={setSForm} insurances={insurances}/>
             {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};const autoProc=sForm.coverage_choice?automaticPriceForItem({kind:'procedure',name:proc?.name||'',origin:explicitOrigin(sForm),insuranceName:insuranceNameById(sForm.insurance_id),eye:sForm.eye,associatedWithSurgery:true}):null;return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked,amount:e.target.checked?(cfg.amount||''):((cfg.amount||autoProc?.amount)?String(cfg.amount||autoProc.amount):'')}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<div><input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>{autoProc&&<small className="package-auto-price">Tabela: {moneyBR(autoProc.amount)}</small>}</div>:<span className="package-included-label">Incluído no valor do pacote</span>}</div>})}</div>}
             <Field label="Nota fiscal / comprovante nº"><input value={sForm.invoice_number||''} onChange={e=>setSForm({...sForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
@@ -7400,20 +7577,22 @@ function App(){
     `}</style>
 
     <Modal open={procedureModal} onClose={closeProcedureModal} title={editingProcedureId?'Editar procedimento':'Novo procedimento'} subtitle="Lançamento simplificado: atendimento, financeiro e repasses." onSave={editingProcedureId?updateProcedure:addProcedure} saveText={editingProcedureId?'Salvar alterações':'Salvar procedimento'}>
-      <div className="form-grid simplified-form-grid">
+      <div className="form-grid simplified-form-grid" data-validation-scope="procedure">
+        {formErrors.procedure?.message&&<div className="form-validation-banner full"><strong>Faltam informações obrigatórias</strong><span>{formErrors.procedure.message} Os campos destacados em vermelho precisam ser preenchidos.</span></div>}
         <div className="form-section full">
           <div className="form-section-title"><span>1</span><div><b>DADOS DO PROCEDIMENTO</b><small>Informações principais para identificação e acompanhamento.</small></div></div>
           <div className="form-section-grid">
-            <Field label="Data do agendamento *"><input required type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field>
-            <Field label="Data da realização *"><input required type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field>
-            <Field label="Paciente *"><input required value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field>
+            <div className={fieldError('procedure','launcher')?'field-error':''}><Field label="Quem está lançando? *"><Select value={pForm.launcher||currentLaunchName||''} setValue={v=>setPForm({...pForm,launcher:v})} options={launcherOptionsAll} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','date')?'field-error':''}><Field label="Data do agendamento *"><input required type="date" value={pForm.date} onChange={e=>setPForm({...pForm,date:e.target.value})}/></Field></div>
+            <div className={fieldError('procedure','realization_date')?'field-error':''}><Field label="Data da realização *"><input required type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field></div>
+            <div className={fieldError('procedure','patient')?'field-error':''}><Field label="Paciente *"><input required value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field></div>
             <Field label="Data de nascimento"><input type="date" value={pForm.patient_birth_date||''} onChange={e=>setPForm({...pForm,patient_birth_date:e.target.value})}/></Field>
-            <Field label="Convênio / Particular *"><Select value={pForm.coverage_choice||''} setValue={v=>setPForm({...pForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field>
-            <Field label="Médico que indicou *"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field>
-            <Field label="Médico que realizou / realizará *"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
-            <Field label="Olho *"><Select value={pForm.eye||''} setValue={v=>setPForm({...pForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field>
+            <div className={fieldError('procedure','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={pForm.coverage_choice||''} setValue={v=>setPForm({...pForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','indicated_by_doctor_id')?'field-error':''}><Field label="Médico que indicou *"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','doctor_id')?'field-error':''}><Field label="Médico que realizou / realizará *"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','eye')?'field-error':''}><Field label="Olho *"><Select value={pForm.eye||''} setValue={v=>setPForm({...pForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
             <Field label="Status"><Select value={pForm.status} setValue={v=>setPForm({...pForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-            <Field label="Procedimentos *" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}</div></div></Field>
+            <div className={fieldError('procedure','procedure_ids')?'field-error full':'full'}><Field label="Procedimentos *" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}</div></div></Field></div>
           </div>
         </div>
 
@@ -7422,7 +7601,7 @@ function App(){
           <div className="form-section-grid finance-simple-grid">
             <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value,price_manual:true})}/><small>{pForm.price_manual?'Valor ajustado manualmente.':procedureAutoPrice?`Prévia automática pela tabela: ${procedureAutoPrice.labels.join(' + ')}.`:'Selecione o procedimento. A prévia aparece imediatamente e é recalculada ao escolher convênio/Particular quando houver diferença de tabela.'} Você pode editar este valor.</small></div></Field>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={pForm.discount_amount||''} onChange={e=>setPForm({...pForm,discount_amount:e.target.value})}/></Field>
-            <FinanceQuickSummary form={pForm} setForm={setPForm}/>
+            <div className={fieldError('procedure','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={pForm} setForm={setPForm}/></div>
             <PaymentBreakdownEditor form={pForm} setForm={setPForm} insurances={insurances}/>
             <Field label="Nota fiscal / comprovante nº"><input value={pForm.invoice_number||''} onChange={e=>setPForm({...pForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={pForm.invoice_issued_date||''} onChange={e=>setPForm({...pForm,invoice_issued_date:e.target.value})}/></Field>
@@ -7680,4 +7859,4 @@ function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onR
   </div>;
 }
 
-createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><V40LoginPriceStyle/><App/></>);
+createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><V40LoginPriceStyle/><V42AlignmentStyle/><App/></>);
