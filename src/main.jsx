@@ -97,23 +97,7 @@ const moneyBR = value => numericValue(value).toLocaleString('pt-BR',{style:'curr
 const financeOrigin = record => record?.payment_origin || (record?.insurance_id || record?.insurance ? 'Convênio' : 'Particular');
 const isCanceledOperational = status => String(status||'').toLowerCase().includes('cancel');
 const isRealizedOperational = status => String(status||'').toLowerCase().includes('realiz');
-
-// Para o Financeiro, Exames e Procedimentos com "data da realização"
-// preenchida até hoje já contam como produção realizada, mesmo que o status
-// operacional ainda não tenha sido trocado manualmente para "Realizado".
-// Cirurgias continuam dependendo do status porque scheduled_on é apenas agenda.
-const isFinanciallyRealized = record => {
-  if(isRealizedOperational(record?.operational_status ?? record?.status)) return true;
-  const sourceType=String(record?.source_type||'');
-  const realizationDate=String(record?.realization_date||'');
-  return ['exam','procedure','extra'].includes(sourceType) &&
-    Boolean(realizationDate) &&
-    realizationDate<=todayISO();
-};
-
-const isFinanciallyPotential = record =>
-  !isCanceledOperational(record?.operational_status ?? record?.status) &&
-  !isFinanciallyRealized(record);
+const isPotentialOperational = status => !isCanceledOperational(status) && !isRealizedOperational(status);
 const netFinancialAmount = record => Math.max(numericValue(record?.total_amount ?? record?.total)-numericValue(record?.discount_amount),0);
 const normalizedBreakdown = value => Array.isArray(value)?value:[];
 const paymentTone = record => {
@@ -2665,7 +2649,7 @@ function App(){
 
   const financialRows = useMemo(()=>{
     const examRows=records.map(r=>({
-      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`exam:${r.group_id||r.id}`,source:'Exame',source_type:'exam',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.exam,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2681,7 +2665,7 @@ function App(){
 
     // Procedimento avulso: um lançamento financeiro por launch_group_id, mesmo que tenha vários procedimentos.
     const standalone=groupProcedureRows(procedureRecords.filter(r=>!r.surgery_id&&!r.surgery_group_id)).map(r=>({
-      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`procedure:${r.group_id||r.id}`,source:'Procedimento',source_type:'procedure',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:netFinancialAmount(r),gross:numericValue(r.total_amount),discount:numericValue(r.discount_amount),received:numericValue(r.received_amount),billed:numericValue(r.billed_amount),expected_receipt_date:r.expected_receipt_date||'',received_date:r.received_date||'',
@@ -2690,7 +2674,7 @@ function App(){
 
     // Procedimentos vinculados só entram financeiramente quando marcados como cobrados à parte.
     const extras=procedureRecords.filter(r=>(r.surgery_id||r.surgery_group_id)&&r.included_in_package===false&&numericValue(r.additional_amount)>0).map(r=>({
-      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',launch_date:r.date,realization_date:r.realization_date||'',date:((r.realization_date||'')&&r.realization_date<=todayISO())?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
+      key:`extra:${r.id}`,source:'Adicional de pacote',source_type:'extra',launch_date:r.date,realization_date:r.realization_date||'',date:isRealizedOperational(r.status)?(r.realization_date||r.date):r.date,patient:r.patient,patient_id:r.patient_id,
       doctor:r.doctor,doctor_id:r.doctor_id,insurance:r.insurance||'Particular',insurance_id:r.insurance_id||'',service:r.procedure,
       operational_status:r.status,payment_origin:r.payment_origin||financeOrigin(r),payment_method:r.payment_method||'',financial_status:r.financial_status||'Pendente',
       total:numericValue(r.additional_amount),gross:numericValue(r.additional_amount),discount:0,received:0,billed:0,expected_receipt_date:r.expected_receipt_date||'',received_date:'',installments:Number(r.installments||1),notes:r.financial_notes||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],indicatedBy:r.indicatedBy||'',base_record:r
@@ -2716,11 +2700,11 @@ function App(){
 
   const financeSummary=useMemo(()=>{
     const valid=filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status));
-    const realized=valid.filter(r=>isFinanciallyRealized(r));
+    const realized=valid.filter(r=>isRealizedOperational(r.operational_status));
     const production=realized.reduce((s,r)=>s+r.total,0);
     const received=valid.reduce((s,r)=>s+r.received,0);
     const receivable=realized.reduce((s,r)=>s+Math.max(r.total-r.received,0),0);
-    const potential=valid.filter(r=>isFinanciallyPotential(r)).reduce((s,r)=>s+r.total,0);
+    const potential=valid.filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
     const particular=valid.reduce((s,r)=>s+paymentAllocation(r,'Particular'),0);
     const insurance=valid.reduce((s,r)=>s+paymentAllocation(r,'Convênio'),0);
     const lost=filteredFinancialRows.filter(r=>isCanceledOperational(r.operational_status)).reduce((s,r)=>s+r.total,0);
@@ -2733,9 +2717,9 @@ function App(){
     const baseMonth=finMonth||monthNow;
     const months=Array.from({length:6},(_,i)=>shiftMonth(baseMonth,i-5));
     const monthRows=m=>base.filter(r=>r.date?.startsWith(m)&&!isCanceledOperational(r.operational_status));
-    const productionTrend=months.map(m=>monthRows(m).filter(r=>isFinanciallyRealized(r)).reduce((s,r)=>s+r.total,0));
+    const productionTrend=months.map(m=>monthRows(m).filter(r=>isRealizedOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
     const receivedTrend=months.map(m=>monthRows(m).reduce((s,r)=>s+r.received,0));
-    const potentialTrend=months.map(m=>monthRows(m).filter(r=>isFinanciallyPotential(r)).reduce((s,r)=>s+r.total,0));
+    const potentialTrend=months.map(m=>monthRows(m).filter(r=>isPotentialOperational(r.operational_status)).reduce((s,r)=>s+r.total,0));
     const sumBy=key=>filteredFinancialRows.filter(r=>!isCanceledOperational(r.operational_status)).reduce((acc,r)=>{const k=r[key]||'Não informado';acc[k]=(acc[k]||0)+r.total;return acc;},{});
     return {
       labels:months.map(shortMonthLabel),productionTrend,receivedTrend,potentialTrend,
@@ -2784,14 +2768,321 @@ function App(){
   const openPromissoryRecord=row=>{const r=row.record;if(r.source_type==='exam'){openEditExam(r.base_record);return;}if(r.source_type==='surgery'){openEditSurgery(r.base_record);return;}if(r.source_type==='procedure'){openEditProcedure(r.base_record);return;}};
 
   const exportPromissoryWord=()=>{
-    const rows=filteredPromissoryRows.map(r=>`<tr><td>${brDate(r.reference_date)}</td><td>${String(r.patient||'')}</td><td>${String(r.service||'')}</td><td>${moneyBR(r.amount)}</td><td>${r.installments}x</td><td>${r.due_date?brDate(r.due_date):'—'}</td><td>${r.status}</td><td>${moneyBR(r.received)}</td><td>${moneyBR(r.balance)}</td></tr>`).join('');
-    const html=`<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#24343d}h1{font-size:22px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #ccd6da;padding:6px;text-align:left}th{background:#edf4f1}</style></head><body><h1>OftalmoCastro — Controle de Promissórias</h1><p>Período: ${promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos')} • ${filteredPromissoryRows.length} registro(s)</p><p>Total: <b>${moneyBR(promissorySummary.total)}</b> • Recebido: <b>${moneyBR(promissorySummary.received)}</b> • Saldo: <b>${moneyBR(promissorySummary.balance)}</b> • Vencido: <b>${moneyBR(promissorySummary.overdue)}</b></p><table><thead><tr><th>Data</th><th>Paciente</th><th>Serviço</th><th>Valor</th><th>Parcelas</th><th>Vencimento</th><th>Situação</th><th>Recebido</th><th>Saldo</th></tr></thead><tbody>${rows||'<tr><td colspan="9">Sem registros.</td></tr>'}</tbody></table></body></html>`;
-    const blob=new Blob(['\ufeff',html],{type:'application/msword'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.doc`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    try{
+      const period=promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos os períodos');
+      const esc=value=>String(value??'')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;');
+
+      const statusClassWord=status=>{
+        const s=String(status||'').toLowerCase();
+        if(s.includes('venc')) return 'overdue';
+        if(s.includes('pago')) return 'paid';
+        if(s.includes('parcial')) return 'partial';
+        return 'open';
+      };
+
+      const rows=filteredPromissoryRows.length
+        ? filteredPromissoryRows.map((r,index)=>`
+          <tr class="${index%2?'alt':''}">
+            <td class="center">${esc(brDate(r.reference_date))}</td>
+            <td class="text strong">${esc(r.patient||'—')}</td>
+            <td class="text">${esc(r.service||'—')}</td>
+            <td class="money">${esc(moneyBR(r.amount))}</td>
+            <td class="center">${esc(`${r.installments}x`)}</td>
+            <td class="center">${esc(r.due_date?brDate(r.due_date):'—')}</td>
+            <td class="center"><span class="status ${statusClassWord(r.status)}">${esc(r.status||'—')}</span></td>
+            <td class="money">${esc(moneyBR(r.received))}</td>
+            <td class="money">${esc(moneyBR(r.balance))}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="9" class="empty">Nenhum registro encontrado para os filtros selecionados.</td></tr>';
+
+      const html=`<!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          @page{size:A4 landscape;margin:1.15cm}
+          *{box-sizing:border-box}
+          body{font-family:Arial,sans-serif;color:#20313b;font-size:8.5pt;line-height:1.25;margin:0}
+          .header{display:table;width:100%;border-bottom:2px solid #315f72;padding-bottom:8pt;margin-bottom:10pt}
+          .header-left,.header-right{display:table-cell;vertical-align:bottom}
+          .header-right{text-align:right;color:#74838c;font-size:8pt;white-space:nowrap}
+          .eyebrow{font-size:7.5pt;letter-spacing:1.2pt;color:#4f8a6b;font-weight:700;margin-bottom:3pt}
+          h1{font-size:17pt;color:#315f72;margin:0 0 3pt}
+          .subtitle{color:#74838c;margin:0}
+          .summary{width:100%;border-collapse:separate;border-spacing:5pt 0;margin:0 -5pt 11pt}
+          .summary td{width:25%;border:1px solid #dce6ea;background:#f7fafb;padding:7pt 8pt;vertical-align:top}
+          .summary span{display:inline;color:#74838c;font-size:7pt;text-transform:uppercase;letter-spacing:.35pt;line-height:1.2}
+          .summary b{font-size:11pt;color:#20313b;white-space:nowrap;line-height:1.15}
+          table.report{width:100%;border-collapse:collapse;table-layout:fixed;font-size:7.8pt}
+          table.report thead{display:table-header-group}
+          table.report tr{page-break-inside:avoid}
+          table.report th{background:#315f72;color:#fff;border:1px solid #315f72;padding:5pt 3.5pt;text-align:left;font-size:7.2pt;text-transform:uppercase;letter-spacing:.15pt}
+          table.report td{border:1px solid #dce5e8;padding:4.5pt 3.5pt;vertical-align:middle;word-wrap:break-word;overflow-wrap:break-word}
+          table.report tr.alt td{background:#f9fbfc}
+          .text{text-align:left}.strong{font-weight:700}.center{text-align:center}.money{text-align:right;white-space:nowrap}
+          .status{display:inline-block;padding:2pt 5pt;border-radius:8pt;font-size:7pt;font-weight:700;white-space:nowrap}
+          .status.paid{background:#eaf5ef;color:#397156}
+          .status.partial{background:#fff4dc;color:#9a671d}
+          .status.overdue{background:#fbeaea;color:#a94a4a}
+          .status.open{background:#edf1f3;color:#55646b}
+          .empty{text-align:center;color:#74838c;padding:16pt!important}
+          .footer{margin-top:10pt;padding-top:6pt;border-top:1px solid #e2eaed;color:#86969e;font-size:7pt}
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="header-left">
+            <div class="eyebrow">GESTÃO FINANCEIRA</div>
+            <h1>Controle de Promissórias</h1>
+            <p class="subtitle">OftalmoCastro • ${esc(period)} • ${filteredPromissoryRows.length} registro(s)</p>
+          </div>
+          <div class="header-right">Relatório gerado em ${esc(new Date().toLocaleString('pt-BR'))}</div>
+        </div>
+
+        <table class="summary">
+          <tr>
+            <td><span>Total em promissórias</span><br><b>${esc(moneyBR(promissorySummary.total))}</b></td>
+            <td><span>Recebido</span><br><b>${esc(moneyBR(promissorySummary.received))}</b></td>
+            <td><span>Saldo em aberto</span><br><b>${esc(moneyBR(promissorySummary.balance))}</b></td>
+            <td><span>Vencido</span><br><b>${esc(moneyBR(promissorySummary.overdue))}</b></td>
+          </tr>
+        </table>
+
+        <table class="report">
+          <colgroup>
+            <col style="width:7%">
+            <col style="width:16%">
+            <col style="width:22%">
+            <col style="width:10.5%">
+            <col style="width:6.5%">
+            <col style="width:9%">
+            <col style="width:10%">
+            <col style="width:9.5%">
+            <col style="width:9.5%">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Data</th><th>Paciente</th><th>Serviço</th><th>Valor</th><th>Parcelas</th>
+              <th>Vencimento</th><th>Situação</th><th>Recebido</th><th>Saldo</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+
+        <div class="footer">OftalmoCastro • Controle financeiro de promissórias</div>
+      </body>
+      </html>`;
+
+      const blob=new Blob(['\ufeff',html],{type:'application/msword;charset=utf-8'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;
+      a.download=`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.doc`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível gerar o arquivo Word das promissórias.');
+    }
   };
 
   const exportPromissoryPdf=()=>{
-    const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4'});const margin=10;let y=12;pdf.setFont('helvetica','bold');pdf.setFontSize(16);pdf.text('OftalmoCastro - Controle de Promissorias',margin,y);y+=7;pdf.setFont('helvetica','normal');pdf.setFontSize(9);pdf.text(`Periodo: ${promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos')} | Registros: ${filteredPromissoryRows.length}`,margin,y);y+=5;pdf.text(`Total: ${moneyBR(promissorySummary.total)} | Recebido: ${moneyBR(promissorySummary.received)} | Saldo: ${moneyBR(promissorySummary.balance)} | Vencido: ${moneyBR(promissorySummary.overdue)}`,margin,y);y+=7;
-    const widths=[18,42,55,24,16,24,22,24,24],headers=['Data','Paciente','Servico','Valor','Parc.','Vencimento','Situacao','Recebido','Saldo'];const drawRow=(vals,bold=false)=>{let x=margin;pdf.setFont('helvetica',bold?'bold':'normal');vals.forEach((v,i)=>{const w=widths[i];pdf.rect(x,y-4,w,7);pdf.text(String(v??'').slice(0,i===2?38:i===1?27:18),x+1.5,y);x+=w;});y+=7;};drawRow(headers,true);filteredPromissoryRows.forEach(r=>{if(y>190){pdf.addPage();y=14;drawRow(headers,true);}drawRow([brDate(r.reference_date),r.patient,r.service,moneyBR(r.amount),`${r.installments}x`,r.due_date?brDate(r.due_date):'—',r.status,moneyBR(r.received),moneyBR(r.balance)]);});pdf.save(`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.pdf`);
+    try{
+      const pdf=new jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});
+      const pageW=297;
+      const pageH=210;
+      const margin=10;
+      const contentW=pageW-(margin*2);
+      const period=promDate?brDate(promDate):(promMonth?monthLabel(promMonth):'Todos os períodos');
+      const generatedAt=new Date().toLocaleString('pt-BR');
+      const safe=value=>String(value??'—')
+        .replace(/•/g,'-')
+        .replace(/[“”]/g,'"')
+        .replace(/[‘’]/g,"'")
+        .replace(/…/g,'...');
+
+      // Soma exata = 277 mm, toda a largura útil de uma A4 paisagem com margens de 10 mm.
+      const widths=[20,46,60,29,18,27,27,25,25];
+      const headers=['Data','Paciente','Serviço','Valor','Parc.','Vencimento','Situação','Recebido','Saldo'];
+      const aligns=['center','left','left','right','center','center','center','right','right'];
+      let y=12;
+
+      const drawTopHeader=()=>{
+        pdf.setTextColor(79,138,107);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(7.5);
+        pdf.text('GESTAO FINANCEIRA',margin,y);
+
+        y+=6;
+        pdf.setTextColor(49,95,114);
+        pdf.setFontSize(16);
+        pdf.text('OftalmoCastro - Controle de Promissorias',margin,y);
+
+        y+=5.5;
+        pdf.setTextColor(103,122,132);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(8.3);
+        pdf.text(`Periodo: ${safe(period)} | ${filteredPromissoryRows.length} registro(s)`,margin,y);
+        pdf.text(`Gerado em ${safe(generatedAt)}`,pageW-margin,y,{align:'right'});
+
+        y+=5;
+        pdf.setDrawColor(214,226,230);
+        pdf.setLineWidth(.35);
+        pdf.line(margin,y,pageW-margin,y);
+        y+=5;
+      };
+
+      const drawSummary=()=>{
+        const items=[
+          ['TOTAL EM PROMISSORIAS',moneyBR(promissorySummary.total)],
+          ['RECEBIDO',moneyBR(promissorySummary.received)],
+          ['SALDO EM ABERTO',moneyBR(promissorySummary.balance)],
+          ['VENCIDO',moneyBR(promissorySummary.overdue)]
+        ];
+        const gap=3;
+        const boxW=(contentW-gap*3)/4;
+        const boxH=16;
+
+        items.forEach(([label,value],i)=>{
+          const x=margin+i*(boxW+gap);
+          pdf.setFillColor(248,251,252);
+          pdf.setDrawColor(220,230,234);
+          pdf.roundedRect(x,y,boxW,boxH,2,2,'FD');
+
+          pdf.setFont('helvetica','bold');
+          pdf.setFontSize(6.5);
+          pdf.setTextColor(112,129,138);
+          pdf.text(label,x+3,y+5);
+
+          pdf.setFontSize(10);
+          pdf.setTextColor(32,49,59);
+          pdf.text(safe(value),x+3,y+11.5);
+        });
+
+        y+=boxH+5;
+      };
+
+      const drawTableHeader=()=>{
+        let x=margin;
+        pdf.setFillColor(49,95,114);
+        pdf.setDrawColor(49,95,114);
+        pdf.setTextColor(255,255,255);
+        pdf.setFont('helvetica','bold');
+        pdf.setFontSize(6.9);
+
+        headers.forEach((label,i)=>{
+          pdf.rect(x,y,widths[i],8,'FD');
+          const align=aligns[i];
+          const tx=align==='right'
+            ? x+widths[i]-1.7
+            : align==='center'
+              ? x+(widths[i]/2)
+              : x+1.7;
+          pdf.text(label,tx,y+5.2,{align});
+          x+=widths[i];
+        });
+        y+=8;
+      };
+
+      const splitCell=(value,width)=>{
+        const text=safe(value);
+        if(!text) return ['—'];
+        return pdf.splitTextToSize(text,Math.max(4,width-3.4));
+      };
+
+      const drawRow=(values,index)=>{
+        const cells=values.map((value,i)=>splitCell(value,widths[i]));
+        const maxLines=Math.max(1,...cells.map(lines=>lines.length));
+        const rowH=Math.max(8,(maxLines*3.55)+3.2);
+
+        // Nunca inicia uma linha se ela não couber inteira.
+        if(y+rowH>pageH-14){
+          pdf.addPage();
+          y=12;
+          drawTopHeader();
+          drawTableHeader();
+        }
+
+        if(index%2){
+          pdf.setFillColor(249,251,252);
+          pdf.rect(margin,y,contentW,rowH,'F');
+        }
+
+        let x=margin;
+        pdf.setDrawColor(220,229,233);
+        pdf.setLineWidth(.2);
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(6.9);
+        pdf.setTextColor(42,57,65);
+
+        cells.forEach((lines,i)=>{
+          pdf.rect(x,y,widths[i],rowH);
+
+          const align=aligns[i];
+          const tx=align==='right'
+            ? x+widths[i]-1.7
+            : align==='center'
+              ? x+(widths[i]/2)
+              : x+1.7;
+
+          // Para células de várias linhas, centralização vertical simples e consistente.
+          const textBlockH=lines.length*3.55;
+          const ty=y+Math.max(4.5,(rowH-textBlockH)/2+3.1);
+
+          pdf.text(lines,tx,ty,{align,maxWidth:widths[i]-3.4});
+          x+=widths[i];
+        });
+
+        y+=rowH;
+      };
+
+      drawTopHeader();
+      drawSummary();
+      drawTableHeader();
+
+      if(!filteredPromissoryRows.length){
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(9);
+        pdf.setTextColor(110,125,132);
+        pdf.text('Nenhum registro encontrado para os filtros selecionados.',margin,y+8);
+      }else{
+        filteredPromissoryRows.forEach((r,index)=>drawRow([
+          brDate(r.reference_date),
+          r.patient||'—',
+          r.service||'—',
+          moneyBR(r.amount),
+          `${r.installments}x`,
+          r.due_date?brDate(r.due_date):'—',
+          r.status||'—',
+          moneyBR(r.received),
+          moneyBR(r.balance)
+        ],index));
+      }
+
+      const pages=pdf.getNumberOfPages();
+      for(let page=1;page<=pages;page++){
+        pdf.setPage(page);
+        pdf.setDrawColor(228,235,238);
+        pdf.line(margin,pageH-10,pageW-margin,pageH-10);
+
+        pdf.setFont('helvetica','normal');
+        pdf.setFontSize(7);
+        pdf.setTextColor(135,149,155);
+        pdf.text(`OftalmoCastro | ${safe(period)}`,margin,pageH-6);
+        pdf.text(`Pagina ${page} de ${pages}`,pageW-margin,pageH-6,{align:'right'});
+      }
+
+      pdf.save(`OftalmoCastro_Promissorias_${promDate||promMonth||'todos'}.pdf`);
+    }catch(e){
+      console.error(e);
+      alert('Não foi possível gerar o PDF das promissórias.');
+    }
   };
 
   const toggleDailyFilter=(current,value,setter)=>setter(current.includes(value)?current.filter(x=>x!==value):[...current,value]);
