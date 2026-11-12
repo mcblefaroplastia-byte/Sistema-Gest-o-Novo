@@ -7,274 +7,109 @@ import { Activity, BarChart3, CalendarDays, ChevronRight, CircleHelp, ClipboardL
 import { supabase } from './supabase';
 import './styles.css';
 
-const monthNow = new Date().toISOString().slice(0, 7);
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const brDate = s => {
-  if (!s) return '';
-  const [y,m,d] = s.split('-');
-  return `${d}/${m}/${y}`;
-};
-const monthLabel = value => {
-  if(!value) return 'Todos os períodos';
-  const [year,month] = value.split('-');
-  const names = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-  return `${names[Number(month)-1]} de ${year}`;
-};
-
-const normalizePhone = phone => String(phone || '').replace(/\D/g, '');
-const normalizeSearchDate = value => {
-  const v=String(value||'').trim();
-  const digits=v.replace(/\D/g,'');
-  if(digits.length===8){
-    const d=digits.slice(0,2),m=digits.slice(2,4),y=digits.slice(4);
-    return `${y}-${m}-${d}`;
-  }
-  return v;
-};
-const patientMatchesSearch = (record,query) => {
-  const q=String(query||'').trim().toLowerCase();
-  if(!q) return true;
-  const birth=String(record?.patient_birth_date||'');
-  const birthBr=birth?brDate(birth):'';
-  const normalizedDate=normalizeSearchDate(q);
-  return String(record?.patient||'').toLowerCase().includes(q) ||
-    String(record?.whatsapp||'').includes(q) ||
-    birth.includes(q) || birthBr.includes(q) || (normalizedDate && birth===normalizedDate);
-};
-const whatsappUrl = phone => {
-  let n = normalizePhone(phone);
-  if (!n) return '';
-  if (!n.startsWith('55')) n = `55${n}`;
-  return `https://wa.me/${n}`;
-};
-const whatsappDisplay = phone => {
-  let n = normalizePhone(phone);
-  if(n.startsWith('55') && n.length>11) n=n.slice(2);
-  if(n.length===11) return `(${n.slice(0,2)}) ${n.slice(2,7)}-${n.slice(7)}`;
-  if(n.length===10) return `(${n.slice(0,2)}) ${n.slice(2,6)}-${n.slice(6)}`;
-  return phone || 'Não informado';
-};
-const followupWhatsappUrl = (phone,name) => {
-  let n = normalizePhone(phone);
-  if(!n) return '';
-  if(!n.startsWith('55')) n=`55${n}`;
-  const firstName=String(name||'').trim().split(/\s+/)[0] || 'Paciente';
-  const message=`Olá, ${firstName}! Tudo bem? 😊 Aqui é da equipe da OftalmoCastro. Estou entrando em contato para acompanhar seu atendimento conosco. Podemos dar continuidade por aqui?`;
-  return `https://wa.me/${n}?text=${encodeURIComponent(message)}`;
-};
-const countBy = (arr, key) => arr.reduce((o, x) => {
-  const k = x[key] || 'Não informado';
-  o[k] = (o[k] || 0) + 1;
-  return o;
-}, {});
-
-const countManyBy = (arr, key) => arr.reduce((o, x) => {
-  const values = Array.isArray(x[key]) && x[key].length ? x[key] : ['Não informado'];
-  values.forEach(k => { o[k] = (o[k] || 0) + 1; });
-  return o;
-}, {});
-
-const totalItems = (arr, key) => arr.reduce((total, item) => total + (Array.isArray(item[key]) ? item[key].length : 0), 0);
-const totalItemsByStatus = (arr, key, status) => arr.reduce((total, item) =>
-  total + (item.status === status && Array.isArray(item[key]) ? item[key].length : 0), 0);
-
-const countRowsByStatus = (arr,status) => arr.filter(item=>item.status===status).length;
-
-const countWeightedBy = (arr, key, itemsKey) => arr.reduce((o, item) => {
-  const label = item[key] || 'Não informado';
-  const weight = Array.isArray(item[itemsKey]) && item[itemsKey].length ? item[itemsKey].length : 0;
-  o[label] = (o[label] || 0) + weight;
-  return o;
-}, {});
-
-const percentOf = (value,total) => total ? Math.round((value/total)*100) : 0;
-
-const numericValue = value => {
-  const n=Number(value||0);
-  return Number.isFinite(n)?n:0;
-};
-const moneyBR = value => numericValue(value).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
-const financeOrigin = record => record?.payment_origin || (record?.insurance_id || record?.insurance ? 'Convênio' : 'Particular');
-const isCanceledOperational = status => String(status||'').toLowerCase().includes('cancel');
-const isRealizedOperational = status => String(status||'').toLowerCase().includes('realiz');
-const isPotentialOperational = status => !isCanceledOperational(status) && !isRealizedOperational(status);
-const netFinancialAmount = record => Math.max(numericValue(record?.total_amount ?? record?.total)-numericValue(record?.discount_amount),0);
-const normalizedBreakdown = value => Array.isArray(value)?value:[];
-const paymentTone = record => {
-  const total=netFinancialAmount(record);
-  const received=numericValue(record?.received_amount ?? record?.received);
-  const status=String(record?.financial_status||'').toLowerCase();
-  if((total>0 && received>=total) || status==='recebido') return 'paid';
-  if(received>0 || status.includes('parcial') || status.includes('faturado') || status.includes('aguardando')) return 'partial';
-  return 'unpaid';
-};
-const paymentToneLabel = record => paymentTone(record)==='paid'?'Pago':paymentTone(record)==='partial'?'Pago parcial':'Não pago';
-const paymentAllocation = (record,type) => {
-  const rows=normalizedBreakdown(record?.payment_breakdown);
-  const total=netFinancialAmount(record);
-  if(rows.length) return rows.filter(x=>x.payer_type===type).reduce((s,x)=>s+numericValue(x.amount),0);
-  const origin=record?.payment_origin||financeOrigin(record);
-  if(origin===type) return total;
-  if(origin==='Misto') return 0;
-  return 0;
-};
+import {
+  accessLabel, brDate, countBy, countManyBy, countRowsByStatus, countWeightedBy,
+  financeOrigin, followupWhatsappUrl, groupLaunchRows, groupProcedureRows,
+  isCanceledOperational, isPotentialOperational, isRealizedOperational, knownCatalogKind,
+  mapProcedureRows, moneyBR, monthLabel, monthNow, netFinancialAmount, normalizeCatalogLabel,
+  normalizePhone, normalizedBreakdown, numericValue, patientMatchesSearch, paymentAllocation,
+  paymentTone, paymentToneLabel, percentOf, shiftMonth, shortMonthLabel, statusClass, todayISO,
+  totalItems, totalItemsByStatus, variationPct, whatsappDisplay, whatsappUrl
+} from './utils/helpers';
+import {
+  BrandMark, Catalog, Field, FinancialDocumentsField, Kpi, LinkedProceduresCell, Login,
+  Modal, ObservationCell, PatientCell, PeriodFilter, ProcedureListCell, Select, WhatsAppIcon
+} from './components/Common';
+import {
+  Bars, DoctorTypeMatrix, DonutChart, FinancialBars, FinancialLineChart,
+  StatusTypeMatrix, TrendLineChart
+} from './components/Charts';
+import {
+  FinanceQuickSummary, PaymentBreakdownEditor, PaymentTrafficLight, RepassesEditor
+} from './components/FinanceFields';
+import { V36PaymentSummaryStyle, V40LoginPriceStyle, V42AlignmentStyle } from './components/AppStyles';
+import { TasksPopsPanel } from './pages/TasksPopsPanel';
+import { syncFinancialDocuments } from './services/financialDocuments';
 
 
-// V24 - Tabela de valores padrão. O preço é apenas uma sugestão inicial:
-// depois de aplicado ao lançamento, o campo Valor total continua totalmente editável.
+
+// Tabela oficial de EXAMES. Cirurgias e procedimentos têm valor 100% manual.
 const STANDARD_PRICE_PRESETS = [
-  // EXAMES / CONSULTAS
   {key:'exam-consulta-particular',kind:'exam',match:['consulta'],label:'Consulta - Particular',amount:400,origin:'Particular'},
   {key:'exam-consulta-convenio',kind:'exam',match:['consulta'],label:'Consulta - Convênio',amount:220,origin:'Convênio'},
+
   {key:'exam-paquimetria-particular',kind:'exam',match:['paquimetria'],label:'Paquimetria - Particular',amount:250,origin:'Particular'},
   {key:'exam-paquimetria-convenio',kind:'exam',match:['paquimetria'],label:'Paquimetria - Convênio',amount:200,origin:'Convênio'},
   {key:'exam-paquimetria-sus',kind:'exam',match:['paquimetria'],label:'Paquimetria - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-mapeamento-particular',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - Particular',amount:250,origin:'Particular'},
   {key:'exam-mapeamento-convenio',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - Convênio',amount:200,origin:'Convênio'},
   {key:'exam-mapeamento-sus',kind:'exam',match:['mapeamento'],label:'Mapeamento de Retina - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-retinografia-particular',kind:'exam',match:['retinografia'],label:'Retinografia - Particular',amount:280,origin:'Particular'},
   {key:'exam-retinografia-convenio',kind:'exam',match:['retinografia'],label:'Retinografia - Convênio',amount:220,origin:'Convênio'},
   {key:'exam-retinografia-sus',kind:'exam',match:['retinografia'],label:'Retinografia - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-campimetria-particular',kind:'exam',match:['campimetria'],label:'Campimetria - Particular',amount:380,origin:'Particular'},
   {key:'exam-campimetria-convenio',kind:'exam',match:['campimetria'],label:'Campimetria - Convênio',amount:320,origin:'Convênio'},
   {key:'exam-campimetria-sus',kind:'exam',match:['campimetria'],label:'Campimetria - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-topografia-particular',kind:'exam',match:['topografia'],label:'Topografia - Particular',amount:280,origin:'Particular'},
   {key:'exam-topografia-convenio',kind:'exam',match:['topografia'],label:'Topografia - Convênio',amount:240,origin:'Convênio'},
   {key:'exam-topografia-sus',kind:'exam',match:['topografia'],label:'Topografia - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-microscopia-particular',kind:'exam',match:['microscopia'],label:'Microscopia - Particular',amount:320,origin:'Particular'},
   {key:'exam-microscopia-convenio',kind:'exam',match:['microscopia'],label:'Microscopia - Convênio',amount:280,origin:'Convênio'},
   {key:'exam-microscopia-sus',kind:'exam',match:['microscopia'],label:'Microscopia - SUS',amount:180,origin:'SUS'},
+
   {key:'exam-biometria-particular',kind:'exam',match:['biometria'],label:'Biometria - Particular',amount:250,origin:'Particular'},
   {key:'exam-biometria-convenio',kind:'exam',match:['biometria'],label:'Biometria - Convênio',amount:200,origin:'Convênio'},
+
   {key:'exam-oct-particular',kind:'exam',match:['oct'],label:'OCT - Particular',amount:750,origin:'Particular'},
   {key:'exam-oct-convenio',kind:'exam',match:['oct'],label:'OCT - Convênio',amount:650,origin:'Convênio'},
-  {key:'exam-oct-sus',kind:'exam',match:['oct'],label:'OCT - SUS (AO)',amount:480,origin:'SUS'},
+  {key:'exam-oct-sus',kind:'exam',match:['oct'],label:'OCT - SUS - AO',amount:480,origin:'SUS'},
+
   {key:'exam-ortoptico-convenio',kind:'exam',match:['ortopt'],label:'Teste Ortóptico - Convênio',amount:250,origin:'Convênio'},
-  {key:'exam-ishihara-convenio',kind:'exam',match:['ishihara'],label:'Teste de Ishihara - Convênio',amount:180,origin:'Convênio'},
+  {key:'exam-ishihara-convenio',kind:'exam',match:['ishihara'],label:'Teste Ishihara - Convênio',amount:180,origin:'Convênio'},
   {key:'exam-titmus-convenio',kind:'exam',match:['titmus'],label:'Teste de Titmus - Convênio',amount:180,origin:'Convênio'},
+
   {key:'exam-curva-particular',kind:'exam',match:['curva tensional'],label:'Curva Tensional - Particular',amount:200,origin:'Particular'},
   {key:'exam-curva-convenio',kind:'exam',match:['curva tensional'],label:'Curva Tensional - Convênio',amount:180,origin:'Convênio'},
+
   {key:'exam-lentes-particular',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - Particular',amount:100,origin:'Particular'},
   {key:'exam-lentes-convenio',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - Convênio',amount:100,origin:'Convênio'},
   {key:'exam-lentes-sus',kind:'exam',match:['teste de lentes','lentes'],label:'Teste de Lentes - SUS',amount:100,origin:'SUS'},
+
   {key:'exam-schirmer-particular',kind:'exam',match:['schirmer'],label:'Teste de Schirmer - Particular',amount:200,origin:'Particular'},
   {key:'exam-schirmer-convenio',kind:'exam',match:['schirmer'],label:'Teste de Schirmer - Convênio',amount:180,origin:'Convênio'},
+
   {key:'exam-oculografia-particular',kind:'exam',match:['oculografia'],label:'Oculografia - Particular',amount:220,origin:'Particular'},
-  {key:'exam-yag-1-particular',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - Particular',amount:520,origin:'Particular'},
-  {key:'exam-yag-1-convenio',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - Convênio',amount:450,origin:'Convênio'},
-  {key:'exam-yag-1-sus',kind:'exam',match:['yag'],label:'YAG Laser - 1 olho - SUS',amount:180,origin:'SUS'},
+
+  {key:'exam-yag-1-particular',kind:'exam',match:['yag'],label:'YAG Laser - cada olho - Particular',amount:520,origin:'Particular'},
+  {key:'exam-yag-1-convenio',kind:'exam',match:['yag'],label:'YAG Laser - cada olho - Convênio',amount:450,origin:'Convênio'},
+  {key:'exam-yag-1-sus',kind:'exam',match:['yag'],label:'YAG Laser - cada olho - SUS',amount:180,origin:'SUS'},
   {key:'exam-yag-ao-particular',kind:'exam',match:['yag'],label:'YAG Laser - AO - Particular',amount:900,origin:'Particular'},
   {key:'exam-yag-ao-convenio',kind:'exam',match:['yag'],label:'YAG Laser - AO - Convênio',amount:820,origin:'Convênio'},
   {key:'exam-yag-ao-sus',kind:'exam',match:['yag'],label:'YAG Laser - AO - SUS',amount:350,origin:'SUS'},
-  {key:'exam-iridotomia-1-particular',kind:'exam',match:['iridotomia'],label:'Iridotomia - 1 olho - Particular',amount:520,origin:'Particular'},
-  {key:'exam-iridotomia-1-convenio',kind:'exam',match:['iridotomia'],label:'Iridotomia - 1 olho - Convênio',amount:450,origin:'Convênio'},
+
+  {key:'exam-iridotomia-1-particular',kind:'exam',match:['iridotomia'],label:'Iridotomia - cada olho - Particular',amount:520,origin:'Particular'},
+  {key:'exam-iridotomia-1-convenio',kind:'exam',match:['iridotomia'],label:'Iridotomia - cada olho - Convênio',amount:450,origin:'Convênio'},
   {key:'exam-iridotomia-ao-particular',kind:'exam',match:['iridotomia'],label:'Iridotomia - AO - Particular',amount:900,origin:'Particular'},
   {key:'exam-iridotomia-ao-convenio',kind:'exam',match:['iridotomia'],label:'Iridotomia - AO - Convênio',amount:820,origin:'Convênio'},
+
   {key:'exam-check-retina-particular',kind:'exam',match:['check up retina','check-up retina'],label:'Check-up Retina - Particular',amount:1150,origin:'Particular'},
   {key:'exam-check-retina-convenio',kind:'exam',match:['check up retina','check-up retina'],label:'Check-up Retina - Convênio',amount:980,origin:'Convênio'},
+
   {key:'exam-check-glaucoma-particular',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - Particular',amount:1250,origin:'Particular'},
   {key:'exam-check-glaucoma-convenio',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - Convênio',amount:1100,origin:'Convênio'},
   {key:'exam-check-glaucoma-sus',kind:'exam',match:['check up glaucoma','check-up glaucoma'],label:'Check-up Glaucoma - SUS',amount:900,origin:'SUS'},
+
   {key:'exam-kit-refrativa-particular',kind:'exam',match:['kit refrativa'],label:'Kit Refrativa - Particular',amount:700,origin:'Particular'},
   {key:'exam-kit-refrativa-convenio',kind:'exam',match:['kit refrativa'],label:'Kit Refrativa - Convênio',amount:600,origin:'Convênio'},
-  {key:'exam-us-1-particular',kind:'exam',match:['ultrassom'],label:'Ultrassom - 1 olho - Particular',amount:260,origin:'Particular'},
+
+  {key:'exam-us-1-particular',kind:'exam',match:['ultrassom'],label:'Ultrassom - cada olho - Particular',amount:260,origin:'Particular'},
   {key:'exam-us-ao-particular',kind:'exam',match:['ultrassom'],label:'Ultrassom - AO - Particular',amount:420,origin:'Particular'},
-  {key:'exam-us-ao-convenio',kind:'exam',match:['ultrassom'],label:'Ultrassom - AO - Convênio',amount:380,origin:'Convênio'},
-
-  // CIRURGIAS
-  {key:'cat-part-visiontech-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Visiontech - 1 olho',amount:3830,origin:'Particular'},
-  {key:'cat-part-visiontech-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Visiontech - 2 olhos',amount:6880,origin:'Particular'},
-  {key:'cat-part-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Asférica - 1 olho',amount:7180,origin:'Particular'},
-  {key:'cat-part-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Asférica - 2 olhos',amount:13380,origin:'Particular'},
-  {key:'cat-part-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Trifocal - 1 olho',amount:14580,origin:'Particular'},
-  {key:'cat-part-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Trifocal - 2 olhos',amount:25940,origin:'Particular'},
-  {key:'cat-part-monotorica-1',kind:'surgery',match:['catarata'],label:'Catarata Particular - Mono Tórica - 1 olho',amount:8280,origin:'Particular'},
-  {key:'cat-part-monotorica-2',kind:'surgery',match:['catarata'],label:'Catarata Particular - Mono Tórica - 2 olhos',amount:11280,origin:'Particular'},
-  {key:'cat-cassi-visiontech-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Visiontech - 1 olho',amount:2280,origin:'Convênio'},
-  {key:'cat-cassi-visiontech-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Visiontech - 2 olhos',amount:3880,origin:'Convênio'},
-  {key:'cat-cassi-esferica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Esférica - 1 olho',amount:4280,origin:'Convênio'},
-  {key:'cat-cassi-esferica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Esférica - 2 olhos',amount:7480,origin:'Convênio'},
-  {key:'cat-cassi-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Asférica - 1 olho',amount:6080,origin:'Convênio'},
-  {key:'cat-cassi-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Asférica - 2 olhos',amount:10280,origin:'Convênio'},
-  {key:'cat-cassi-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Trifocal - 1 olho',amount:13580,origin:'Convênio'},
-  {key:'cat-cassi-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Trifocal - 2 olhos',amount:23580,origin:'Convênio'},
-  {key:'cat-cassi-monotorica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Mono Tórica - 1 olho',amount:6280,origin:'Convênio'},
-  {key:'cat-cassi-monotorica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Mono Tórica - 2 olhos',amount:11180,origin:'Convênio'},
-  {key:'cat-cassi-tritorica-1',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Tri Tórica - 1 olho',amount:13580,origin:'Convênio'},
-  {key:'cat-cassi-tritorica-2',kind:'surgery',match:['catarata'],label:'Catarata CASSI/IAMSPE/SulAmérica - Tri Tórica - 2 olhos',amount:23580,origin:'Convênio'},
-  {key:'cat-unimed-asferica-1',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Asférica - 1 olho',amount:3330,origin:'Convênio'},
-  {key:'cat-unimed-asferica-2',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Asférica - 2 olhos',amount:5880,origin:'Convênio'},
-  {key:'cat-unimed-trifocal-1',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Trifocal - 1 olho',amount:9880,origin:'Convênio'},
-  {key:'cat-unimed-trifocal-2',kind:'surgery',match:['catarata'],label:'Catarata Unimed/Oeste - Trifocal - 2 olhos',amount:17480,origin:'Convênio'},
-  {key:'faco-trec-1',kind:'surgery',match:['faco trec'],label:'FACO + TREC - 1 olho',amount:9580,origin:'Convênio'},
-  {key:'faco-trec-2',kind:'surgery',match:['faco trec'],label:'FACO + TREC - 2 olhos',amount:18280,origin:'Convênio'},
-  {key:'trec-1',kind:'surgery',match:['trec'],label:'TREC - 1 olho',amount:5850,origin:'Convênio'},
-  {key:'trec-2',kind:'surgery',match:['trec'],label:'TREC - 2 olhos',amount:11480,origin:'Convênio'},
-  {key:'refrativa-1',kind:'surgery',match:['refrativ'],label:'Cirurgia refrativa - 1 olho',amount:4900,origin:'Particular'},
-  {key:'refrativa-2',kind:'surgery',match:['refrativ'],label:'Cirurgia refrativa - 2 olhos',amount:7900,origin:'Particular'},
-  {key:'crosslinking-1',kind:'surgery',match:['crosslink'],label:'Crosslinking - 1 olho',amount:3200,origin:'Particular'},
-  {key:'crosslinking-2',kind:'surgery',match:['crosslink'],label:'Crosslinking - 2 olhos',amount:6400,origin:'Particular'},
-  {key:'pterigio-part-1',kind:'surgery',match:['pterig'],label:'Pterígio Particular/Convênio - 1 olho',amount:3600,origin:'Particular'},
-  {key:'pterigio-part-2',kind:'surgery',match:['pterig'],label:'Pterígio Particular/Convênio - 2 olhos',amount:6250,origin:'Particular'},
-  {key:'pterigio-iamspe-1',kind:'surgery',match:['pterig'],label:'Pterígio IAMSPE - 1 olho',amount:2250,origin:'Convênio'},
-  {key:'pterigio-iamspe-2',kind:'surgery',match:['pterig'],label:'Pterígio IAMSPE - 2 olhos',amount:3950,origin:'Convênio'},
-  {key:'cisto-moll',kind:'surgery',match:['cisto','moll'],label:'Cisto de Moll',amount:850,origin:'Particular'},
-  {key:'calazio-1',kind:'surgery',match:['calazio'],label:'Calázio - 1',amount:850,origin:'Particular'},
-  {key:'calazio-2',kind:'surgery',match:['calazio'],label:'Calázio - 2',amount:1600,origin:'Particular'},
-  {key:'tumor-palpebral',kind:'surgery',match:['tumor palpebr','t u palpebr'],label:'T.U. Palpebral',amount:1800,origin:'Particular'},
-  {key:'lobuloplastia',kind:'surgery',match:['lobuloplast'],label:'Lobuloplastia - 2 lados',amount:1600,origin:'Particular'},
-  {key:'cauterizacao',kind:'surgery',match:['cauteriza','cilio'],label:'Cauterização de cílios - cada olho/sessão',amount:480,origin:'Particular'},
-  {key:'estrabismo',kind:'surgery',match:['estrab'],label:'Cirurgia de estrabismo - com sedação',amount:15500,origin:'Particular'},
-  {key:'blefaro-superior',kind:'surgery',match:['blefaroplastia superior'],exclude:['inferior'],label:'Blefaroplastia superior',amount:6200,origin:'Particular'},
-  {key:'blefaro-inferior',kind:'surgery',match:['blefaroplastia inferior'],label:'Blefaroplastia inferior',amount:6800,origin:'Particular'},
-  {key:'blefaro-sup-inf',kind:'surgery',match:['blefaroplastia superior inferior','blefaroplastia superior + inferior'],label:'Blefaroplastia superior + inferior',amount:12800,origin:'Particular'},
-  {key:'blefaro-sup-lifting',kind:'surgery',match:['blefaroplastia superior','lifting'],label:'Blefaroplastia superior + lifting de supercílio',amount:8600,origin:'Particular'},
-  {key:'blefaro-completa-lifting',kind:'surgery',match:['blefaroplastia','inferior','lifting'],label:'Blefaroplastia superior + inferior + lifting',amount:13300,origin:'Particular'},
-  {key:'supercilio',kind:'surgery',match:['supercilio'],label:'Supercílio',amount:6200,origin:'Particular'},
-  {key:'entropio-1',kind:'surgery',match:['entrop'],label:'Entrópio/Ectrópio - 1 olho',amount:6300,origin:'Particular'},
-  {key:'entropio-2',kind:'surgery',match:['entrop'],label:'Entrópio - ambos os olhos',amount:9800,origin:'Particular'},
-  {key:'ectropio-2',kind:'surgery',match:['ectrop'],label:'Ectrópio - ambos os olhos',amount:9800,origin:'Particular'},
-  {key:'ptose-1',kind:'surgery',match:['ptose'],label:'Ptose - 1 olho',amount:6300,origin:'Particular'},
-  {key:'ptose-2',kind:'surgery',match:['ptose'],label:'Ptose - ambos os olhos',amount:9800,origin:'Particular'},
-  {key:'ptose-pacote',kind:'surgery',match:['ptose'],label:'Ptose na cirurgia - pacote',amount:2600,origin:'Particular'},
-
-  // PROCEDIMENTOS
-  {key:'botox-unica',kind:'procedure',match:['botox','toxina'],label:'Botox - aplicação com retoque',amount:1600,origin:'Particular'},
-  {key:'botox-3',kind:'procedure',match:['botox','toxina'],label:'Botox - pacote 3 aplicações / plano anual',amount:4200,origin:'Particular'},
-  {key:'botox-cirurgia',kind:'procedure',match:['botox','toxina'],label:'Botox na cirurgia',amount:1400,origin:'Particular'},
-  {key:'laser-face',kind:'procedure',match:['laser co2','laser de face','laser face'],label:'Laser de face',amount:3300,origin:'Particular'},
-  {key:'laser-face-cirurgia',kind:'procedure',match:['laser co2','laser de face','laser face'],label:'Laser de face - pacote na cirurgia',amount:2700,origin:'Particular'},
-  {key:'laser-area',kind:'procedure',match:['laser'],label:'Laser por área',amount:960,origin:'Particular'},
-  {key:'laser-area-cirurgia',kind:'procedure',match:['laser'],label:'Laser por área na cirurgia',amount:900,origin:'Particular'},
-  {key:'laser-cicatriz-1',kind:'procedure',match:['laser','cicatriz'],label:'Laser cicatriz - 1 sessão',amount:750,origin:'Particular'},
-  {key:'laser-cicatriz-3',kind:'procedure',match:['laser','cicatriz'],label:'Laser cicatriz - 3 sessões',amount:1900,origin:'Particular'},
-  {key:'laser-cool-peel',kind:'procedure',match:['laser'],label:'Laser frio (Cool Peel)',amount:1600,origin:'Particular'},
-  {key:'laser-combo',kind:'procedure',match:['laser'],label:'Laser Combo - Face + Pescoço + Colo',amount:5000,origin:'Particular'},
-  {key:'us-olhos',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área dos olhos',amount:1600,origin:'Particular'},
-  {key:'us-face',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - face',amount:2400,origin:'Particular'},
-  {key:'us-face-full',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - face full',amount:3500,origin:'Particular'},
-  {key:'us-papada',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - papada',amount:1600,origin:'Particular'},
-  {key:'us-pescoco',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - pescoço',amount:1600,origin:'Particular'},
-  {key:'us-adicional',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área adicional',amount:1200,origin:'Particular'},
-  {key:'us-full-papada',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - full face + papada',amount:4100,origin:'Particular'},
-  {key:'us-corporal',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área corporal',amount:3500,origin:'Particular'},
-  {key:'us-corporal-bi',kind:'procedure',match:['microfoc','ultrassom'],label:'Ultrassom microfocado - área corporal bilateral',amount:4900,origin:'Particular'},
-  {key:'profhilo',kind:'procedure',match:['profhilo'],label:'Profhilo - 1 seringa',amount:2200,origin:'Particular'},
-  {key:'bioestimulador',kind:'procedure',match:['bioestimul'],label:'Bioestimulador de colágeno',amount:2280,origin:'Particular'},
-  {key:'bioestimulador-cirurgia',kind:'procedure',match:['bioestimul'],label:'Bioestimulador - na cirurgia',amount:1900,origin:'Particular'},
-  {key:'skinvive',kind:'procedure',match:['skinvive','skinbooster'],label:'Skinbooster / Skinvive',amount:900,origin:'Particular'},
-  {key:'pdo',kind:'procedure',match:['pdo'],label:'Fios de PDO',amount:450,origin:'Particular'},
-  {key:'preenchimento-labial',kind:'procedure',match:['preenchimento labial'],label:'Preenchimento labial',amount:1500,origin:'Particular'},
-  {key:'acido-hialuronico',kind:'procedure',match:['hialuron'],label:'Ácido hialurônico - 1 seringa',amount:1350,origin:'Particular'},
-  {key:'maos',kind:'procedure',match:['mao','mãos'],label:'Rejuvenescimento mãos - Bioestimulador + Ácido H.',amount:2900,origin:'Particular'},
-  {key:'anti-vegf-individual',kind:'procedure',match:['anti vegf'],label:'Anti-VEGF / Intravítreo - individual',amount:4500,origin:'Particular'},
-  {key:'anti-vegf-3',kind:'procedure',match:['anti vegf'],label:'Anti-VEGF / Intravítreo - pacote com 3',amount:12500,origin:'Particular'},
-  {key:'triancinolona',kind:'procedure',match:['triancinolona'],label:'Triancinolona',amount:1200,origin:'Particular'},
-  {key:'ozurdex',kind:'procedure',match:['ozurdex'],label:'Ozurdex - cada aplicação',amount:4800,origin:'Particular'},
-  {key:'avastin-1',kind:'procedure',match:['avastin'],label:'Avastin - individual',amount:1900,origin:'Particular'},
-  {key:'avastin-3',kind:'procedure',match:['avastin'],label:'Avastin - 3 aplicações',amount:4500,origin:'Particular'},
-  {key:'vabysmo-1',kind:'procedure',match:['vabysmo'],label:'Vabysmo - 1 aplicação',amount:5250,origin:'Particular'},
-  {key:'vabysmo-4',kind:'procedure',match:['vabysmo'],label:'Vabysmo - 4 aplicações + OCT',amount:19900,origin:'Particular'}
+  {key:'exam-us-ao-convenio',kind:'exam',match:['ultrassom'],label:'Ultrassom - AO - Convênio',amount:380,origin:'Convênio'}
 ];
 
 const presetAppliesToName = (preset,name) => {
@@ -284,483 +119,7 @@ const presetAppliesToName = (preset,name) => {
   return matches && !excluded;
 };
 
-const normalizeCatalogLabel = value => String(value||'')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g,'')
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g,' ')
-  .trim();
 
-const knownCatalogKind = value => {
-  const n=normalizeCatalogLabel(value);
-  const surgery=
-    n.includes('catarata') || n.includes('blefaroplast') || n.includes('ptose') ||
-    n.includes('pterig') || n.includes('estrab') || n.includes('refrativ') ||
-    n.includes('ectrop') || n.includes('entrop') ||
-    ((n.includes('tumor'))&&(n.includes('palpebr')||n.includes('conjunt'))) ||
-    n.includes('calazio') || (n.includes('nodul')&&n.includes('palpebr')) ||
-    (n.includes('sondagem')&&n.includes('lacr')) || n.includes('outra cirurgia');
-  if(surgery) return 'surgery';
-
-  const procedure=
-    n.includes('anti vegf') || n.includes('avastin') || n.includes('lucentis') || n.includes('eylia') || n.includes('vabysmo') ||
-    n.includes('ozurdex') || (n.includes('vias lacrimais')&&!n.includes('sondagem')) ||
-    (n.includes('les')&&n.includes('palpebr')&&!n.includes('tumor')&&!n.includes('nodul')) ||
-    n.includes('laser co2') || (n.includes('laser')&&n.includes('mao')) ||
-    n.includes('botox') || n.includes('toxina botulin') || n.includes('microfoc') || n.includes('ultrassom') || n.startsWith('us ') ||
-    n.includes('bioestimul') || n.includes('profhilo') || n.includes('skinvive') || n.includes('harmoniz') ||
-    n.includes('hialuron') || (n.includes('cicatriz')&&n.includes('acne')) || n.includes('terco inferior') ||
-    (n.includes('lifting')&&n.includes('superc'));
-  if(procedure) return 'procedure';
-  return 'unknown';
-};
-
-const shiftMonth = (value,delta) => {
-  const base = value || monthNow;
-  const [year,month] = base.split('-').map(Number);
-  const d = new Date(year,month-1+delta,1);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-};
-
-const shortMonthLabel = value => {
-  if(!value) return '';
-  const [year,month] = value.split('-');
-  const names = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-  return `${names[Number(month)-1]}/${String(year).slice(-2)}`;
-};
-
-const variationPct = (current,previous) => {
-  if(previous===0) return current>0 ? 100 : 0;
-  return Math.round(((current-previous)/previous)*100);
-};
-
-const groupLaunchRows = (rows, kind) => {
-  if(kind==='exam'){
-    const groups=new Map();
-    rows.forEach(r=>{
-      const groupId=r.launch_group_id||r.id;
-      if(!groups.has(groupId)){
-        groups.set(groupId,{
-          group_id:groupId,
-          db_ids:[],
-          patient_id:r.patients?.id||'',
-          date:r.exam_date,
-          realization_date:r.realization_date||'',
-          eye:r.eye||'',
-          patient:r.patients?.full_name||'',
-          whatsapp:r.patients?.whatsapp||'',
-          patient_birth_date:r.patients?.birth_date||'',
-          doctor:r.doctors?.name||'',
-          doctor_id:r.doctors?.id||'',
-          indicatedBy:r.indicated_by?.name||'',
-          indicatedById:r.indicated_by?.id||'',
-          status:r.status,
-          obs:r.observation||'',
-          launchedBy:r.launched_by,
-          launchedByName:r.launched_by_name||'',
-          exam_type_ids:[],
-          exam_names:[],
-          insurance:r.insurances?.name||'',
-          insurance_id:r.insurances?.id||'',
-          payment_origin:r.payment_origin||'',
-          total_amount:numericValue(r.total_amount),
-          discount_amount:numericValue(r.discount_amount),
-          received_amount:numericValue(r.received_amount),
-          payment_method:r.payment_method||'',
-          installments:Number(r.installments||1),
-          financial_status:r.financial_status||'Pendente',
-          expected_receipt_date:r.expected_receipt_date||'',
-          received_date:r.received_date||'',
-          billed_amount:numericValue(r.billed_amount),
-          billing_competence:r.billing_competence||'',
-          billing_date:r.billing_date||'',
-          financial_notes:r.financial_notes||'',
-          price_preset_key:r.price_preset_key||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],repasses:r.repasses||[]
-        });
-      }
-      const g=groups.get(groupId);
-      g.db_ids.push(r.id);
-      if(r.exam_types?.id) g.exam_type_ids.push(r.exam_types.id);
-      if(r.exam_types?.name) g.exam_names.push(r.exam_types.name);
-    });
-    return [...groups.values()].map(g=>({
-      ...g,
-      id:g.group_id,
-      exam:g.exam_names.join(' • '),
-      exam_type_id:g.exam_type_ids[0]||''
-    }));
-  }
-
-  // V17: cada linha classificada como surgery/review representa UMA cirurgia.
-  // Registros procedure_legacy permanecem preservados no banco, mas aparecem
-  // somente no módulo Procedimentos.
-  return rows
-    .filter(r=>r.record_kind!=='procedure_legacy')
-    .map(r=>({
-      id:r.id,
-      group_id:r.launch_group_id||r.id,
-      db_ids:[r.id],
-      patient_id:r.patients?.id||'',
-      date:r.surgery_date,
-      scheduled_on:r.scheduled_on||'',
-      patient:r.patients?.full_name||'',
-      whatsapp:r.patients?.whatsapp||'',
-      patient_birth_date:r.patients?.birth_date||'',
-      doctor:r.doctors?.name||'',
-      doctor_id:r.doctors?.id||'',
-      indicatedBy:r.indicated_by?.name||'',
-      indicatedById:r.indicated_by?.id||'',
-      status:r.status,
-      obs:r.observation||'',
-      launchedBy:r.launched_by,
-      launchedByName:r.launched_by_name||'',
-      surgery_type_id:r.surgery_type?.id||r.surgery_type_id||'',
-      surgery_type:r.surgery_type?.name||'Cirurgia a classificar',
-      surgery_type_names:[r.surgery_type?.name||'Cirurgia a classificar'],
-      procedure_ids:[],
-      procedure_names:[],
-      procedure:'Sem procedimentos vinculados',
-      eye:r.eye,
-      insurance:r.insurances?.name||'',
-      insurance_id:r.insurances?.id||'',
-      arrival:r.arrival_time||'',
-      time:r.surgery_time||'',
-      payment:r.payment_status||'',
-      payment_origin:r.payment_origin||'',
-      total_amount:numericValue(r.total_amount),
-      discount_amount:numericValue(r.discount_amount),
-      received_amount:numericValue(r.received_amount),
-      payment_method:r.payment_method||'',
-      installments:r.installments||1,
-      financial_status:r.financial_status||'Pendente',
-      expected_receipt_date:r.expected_receipt_date||'',
-      received_date:r.received_date||'',
-      billed_amount:numericValue(r.billed_amount),
-      billing_competence:r.billing_competence||'',
-      billing_date:r.billing_date||'',
-      financial_notes:r.financial_notes||'',payment_breakdown:r.payment_breakdown||[],invoice_number:r.invoice_number||'',invoice_issued_date:r.invoice_issued_date||'',invoice_file_path:r.invoice_file_path||'',financial_documents:r.financial_documents||[],repasses:r.repasses||[],lio_description:r.lio_description||'',
-      procedure_finance:{},
-      classification_review:r.record_kind==='review'
-    }));
-};
-
-const mapProcedureRows = (rows, surgeryById=new Map(), surgeryByGroup=new Map()) => rows.filter(r=>r.record_kind!=='surgery_legacy').map(r=>{
-  const linkedSurgery=(r.surgery_id&&surgeryById.get(r.surgery_id)) || surgeryByGroup.get(r.surgery_group_id) || null;
-  return {
-    id:r.id,
-    group_id:r.launch_group_id||r.id,
-    patient_id:r.patients?.id||'',
-    date:r.procedure_date,
-    realization_date:r.realization_date||'',
-    patient:r.patients?.full_name||'',
-    whatsapp:r.patients?.whatsapp||'',
-    patient_birth_date:r.patients?.birth_date||'',
-    doctor:r.doctors?.name||'',
-    doctor_id:r.doctors?.id||'',
-    indicatedBy:r.indicated_by?.name||'',
-    indicatedById:r.indicated_by?.id||'',
-    procedure:r.procedures?.name||'',
-    procedure_id:r.procedures?.id||r.procedure_id||'',
-    eye:r.eye||'Não se aplica',
-    insurance:r.insurances?.name||'',
-    insurance_id:r.insurances?.id||'',
-    status:r.status,
-    time:r.procedure_time||'',
-    payment:r.payment_status||'Não informado',
-    payment_origin:r.payment_origin||'',
-    total_amount:numericValue(r.total_amount),
-    discount_amount:numericValue(r.discount_amount),
-    received_amount:numericValue(r.received_amount),
-    payment_method:r.payment_method||'',
-    installments:r.installments||1,
-    financial_status:r.financial_status||'Pendente',
-    expected_receipt_date:r.expected_receipt_date||'',
-    received_date:r.received_date||'',
-    billed_amount:numericValue(r.billed_amount),
-    billing_competence:r.billing_competence||'',
-    billing_date:r.billing_date||'',
-    financial_notes:r.financial_notes||'',
-    price_preset_key:r.price_preset_key||'',
-    payment_breakdown:r.payment_breakdown||[],
-    invoice_number:r.invoice_number||'',
-    invoice_issued_date:r.invoice_issued_date||'',
-    invoice_file_path:r.invoice_file_path||'',
-    financial_documents:r.financial_documents||[],
-    repasses:r.repasses||[],
-    included_in_package:r.included_in_package!==false,
-    additional_amount:numericValue(r.additional_amount),
-    obs:r.observation||'',
-    launchedBy:r.launched_by,
-    launchedByName:r.launched_by_name||'',
-    surgery_id:r.surgery_id||'',
-    surgery_group_id:r.surgery_group_id||'',
-    linked_surgery:linkedSurgery?.surgery_type||'',
-    linked_surgery_group:linkedSurgery||null,
-    legacy_surgery_id:r.legacy_surgery_id||''
-  };
-});
-
-
-// Agrupa apenas a VISUALIZAÇÃO dos procedimentos.
-// Cada procedure_record continua existindo individualmente e continua contando
-// como 1 procedimento nos Resultados. Procedimentos do mesmo pacote cirúrgico
-// aparecem em uma única linha para facilitar a leitura operacional.
-const groupProcedureRows = rows => {
-  const groups=new Map();
-  (rows||[]).forEach(row=>{
-    // Prefere surgery_group_id para que registros antigos do mesmo pacote
-    // sejam unidos mesmo quando alguns têm surgery_id e outros têm apenas o grupo.
-    const groupKey=row.surgery_group_id
-      ? `surgery-group:${row.surgery_group_id}:${row.patient_id}:${row.date}`
-      : row.surgery_id
-        ? `surgery:${row.surgery_id}`
-        : row.group_id
-          ? `launch:${row.group_id}`
-          : `row:${row.id}`;
-
-    if(!groups.has(groupKey)){
-      groups.set(groupKey,{
-        ...row,
-        id:groupKey,
-        group_key:groupKey,
-        db_ids:[],
-        procedure_ids:[],
-        procedure_names:[],
-        item_count:0
-      });
-    }
-
-    const group=groups.get(groupKey);
-    group.db_ids.push(row.id);
-    group.procedure_ids.push(row.procedure_id);
-    group.procedure_names.push(row.procedure);
-    group.item_count+=1;
-
-    // Se algum item do grupo possuir o vínculo resolvido, preserva-o no grupo.
-    if(!group.linked_surgery && row.linked_surgery) group.linked_surgery=row.linked_surgery;
-    if(!group.linked_surgery_group && row.linked_surgery_group) group.linked_surgery_group=row.linked_surgery_group;
-    if(!group.surgery_id && row.surgery_id) group.surgery_id=row.surgery_id;
-    if(!group.surgery_group_id && row.surgery_group_id) group.surgery_group_id=row.surgery_group_id;
-  });
-
-  return [...groups.values()].map(group=>({
-    ...group,
-    procedure:group.procedure_names.join(' • ')
-  }));
-};
-
-function WhatsAppIcon(){
-  return <svg viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M19.11 17.47c-.26-.13-1.52-.75-1.76-.84-.24-.09-.41-.13-.59.13-.17.26-.67.84-.82 1.02-.15.17-.3.2-.56.07-.26-.13-1.09-.4-2.08-1.29-.77-.68-1.29-1.53-1.44-1.79-.15-.26-.02-.4.11-.53.12-.12.26-.3.39-.45.13-.15.17-.26.26-.43.09-.17.04-.32-.02-.45-.07-.13-.59-1.42-.8-1.94-.21-.51-.43-.44-.59-.45h-.5c-.17 0-.45.07-.69.32-.24.26-.91.89-.91 2.17 0 1.27.93 2.5 1.06 2.67.13.17 1.82 2.78 4.41 3.9.62.27 1.1.43 1.47.55.62.2 1.18.17 1.62.1.49-.07 1.52-.62 1.73-1.22.21-.6.21-1.12.15-1.22-.07-.11-.24-.17-.5-.3Z"/><path fill="currentColor" d="M16.03 3C8.84 3 3 8.75 3 15.85c0 2.26.6 4.47 1.74 6.42L3 29l6.93-1.8a13.16 13.16 0 0 0 6.09 1.48h.01c7.18 0 13.02-5.76 13.02-12.84C29.05 8.75 23.21 3 16.03 3Zm0 23.51h-.01a10.94 10.94 0 0 1-5.57-1.51l-.4-.24-4.11 1.07 1.1-3.96-.26-.41a10.58 10.58 0 0 1-1.65-5.61C5.13 9.95 10.02 5.16 16.03 5.16S26.92 9.95 26.92 15.85c0 5.88-4.89 10.66-10.89 10.66Z"/></svg>;
-}
-
-function Bars({data}){
-  const entries = Object.entries(data).sort((a,b)=>b[1]-a[1]);
-  if(!entries.length) return <div className="empty">Sem dados para este período.</div>;
-  const max = Math.max(...entries.map(([,v])=>v), 1);
-  return <>{entries.slice(0,15).map(([k,v])=>
-    <div className="bar-row" key={k}>
-      <div className="ellipsis" title={k}>{k}</div>
-      <div className="bar-bg"><div className="bar" style={{width:`${v/max*100}%`}} /></div>
-      <b>{v}</b>
-    </div>
-  )}</>;
-}
-
-
-function DonutChart({title,data,centerLabel='Total'}){
-  const entries=Object.entries(data||{}).filter(([,v])=>Number(v)>0);
-  const total=entries.reduce((s,[,v])=>s+Number(v||0),0);
-  const colors=['#4f8a6b','#315f72','#b9802b','#b85c5c','#7a6f9b','#6b8f9b','#9a7f56'];
-  const radius=48;
-  const circumference=2*Math.PI*radius;
-  let offset=0;
-
-  if(!total) return <div className="viz-card chart-empty-card"><div className="viz-title">{title}</div><div className="empty">Sem dados para este período.</div></div>;
-
-  return <div className="viz-card donut-card">
-    <div className="viz-title">{title}</div>
-    <div className="donut-layout">
-      <svg className="donut-svg" viewBox="0 0 130 130" role="img" aria-label={`${title}. Total ${total}`}>
-        <circle cx="65" cy="65" r={radius} fill="none" stroke="#edf1f3" strokeWidth="18"/>
-        {entries.map(([label,value],i)=>{
-          const length=(Number(value)/total)*circumference;
-          const dashoffset=-offset;
-          offset+=length;
-          return <circle
-            key={label}
-            cx="65" cy="65" r={radius}
-            fill="none"
-            stroke={colors[i%colors.length]}
-            strokeWidth="18"
-            strokeDasharray={`${length} ${circumference-length}`}
-            strokeDashoffset={dashoffset}
-            transform="rotate(-90 65 65)"
-            strokeLinecap="butt"
-          />;
-        })}
-        <text x="65" y="59" textAnchor="middle" className="donut-total">{total}</text>
-        <text x="65" y="76" textAnchor="middle" className="donut-label">{centerLabel}</text>
-      </svg>
-      <div className="donut-legend">
-        {entries.map(([label,value],i)=><div key={label}>
-          <span className="legend-dot" style={{background:colors[i%colors.length]}}/>
-          <span className="legend-name">{label}</span>
-          <b>{value}</b>
-          <small>{percentOf(value,total)}%</small>
-        </div>)}
-      </div>
-    </div>
-  </div>;
-}
-
-function TrendLineChart({title,labels,series,percent=false}){
-  const width=760, height=260;
-  const pad={l:52,r:22,t:28,b:44};
-  const values=series.flatMap(s=>s.values||[]);
-  const max=Math.max(...values,percent?100:1);
-  const min=0;
-  const plotW=width-pad.l-pad.r;
-  const plotH=height-pad.t-pad.b;
-  const x=i=>labels.length<=1?pad.l+plotW/2:pad.l+(i/(labels.length-1))*plotW;
-  const y=v=>pad.t+plotH-((Number(v)-min)/(max-min||1))*plotH;
-  const grid=[0,.25,.5,.75,1];
-
-  return <div className="viz-card line-chart-card">
-    <div className="viz-title-row">
-      <div><div className="viz-title">{title}</div><small>{percent?'Percentual de conclusão por mês':'Comparação mensal de volume'}</small></div>
-      <div className="line-legend">{series.map(s=><span key={s.name}><i style={{background:s.color}}/>{s.name}</span>)}</div>
-    </div>
-    <svg className="trend-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-      {grid.map(g=>{
-        const val=Math.round(min+(max-min)*g);
-        const gy=y(val);
-        return <g key={g}>
-          <line x1={pad.l} x2={width-pad.r} y1={gy} y2={gy} stroke="#e7edef" strokeWidth="1"/>
-          <text x={pad.l-8} y={gy+4} textAnchor="end" className="trend-axis">{val}{percent?'%':''}</text>
-        </g>;
-      })}
-      {labels.map((label,i)=><text key={label} x={x(i)} y={height-14} textAnchor="middle" className="trend-axis">{label}</text>)}
-      {series.map(s=>{
-        const points=(s.values||[]).map((v,i)=>`${x(i)},${y(v)}`).join(' ');
-        return <g key={s.name}>
-          <polyline points={points} fill="none" stroke={s.color} strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
-          {(s.values||[]).map((v,i)=><g key={i}>
-            <circle cx={x(i)} cy={y(v)} r="4.2" fill="#fff" stroke={s.color} strokeWidth="2.5"/>
-            <text x={x(i)} y={y(v)-9} textAnchor="middle" className="trend-value">{v}{percent?'%':''}</text>
-          </g>)}
-        </g>;
-      })}
-    </svg>
-  </div>;
-}
-
-
-function FinancialLineChart({title,labels,series}){
-  const width=860,height=290;
-  const pad={l:82,r:24,t:34,b:48};
-  const values=series.flatMap(item=>item.values||[]).map(numericValue);
-  const max=Math.max(...values,1);
-  const plotW=width-pad.l-pad.r,plotH=height-pad.t-pad.b;
-  const x=i=>labels.length<=1?pad.l+plotW/2:pad.l+(i/(labels.length-1))*plotW;
-  const y=v=>pad.t+plotH-(numericValue(v)/max)*plotH;
-  const grid=[0,.25,.5,.75,1];
-  return <div className="card finance-line-card">
-    <div className="finance-chart-head"><div><span>EVOLUÇÃO FINANCEIRA</span><h3>{title}</h3><p>Produção, recebimentos e potencial do período.</p></div>
-      <div className="finance-line-legend">{series.map(s=><span key={s.name}><i style={{background:s.color}}/>{s.name}</span>)}</div>
-    </div>
-    <svg className="finance-line-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
-      {grid.map(g=>{const value=max*g;const gy=y(value);return <g key={g}>
-        <line x1={pad.l} x2={width-pad.r} y1={gy} y2={gy} stroke="#e7edef" strokeWidth="1"/>
-        <text x={pad.l-10} y={gy+4} textAnchor="end" className="finance-axis">{moneyBR(value).replace(',00','')}</text>
-      </g>})}
-      {labels.map((label,i)=><text key={`${label}-${i}`} x={x(i)} y={height-15} textAnchor="middle" className="finance-axis">{label}</text>)}
-      {series.map(s=>{
-        const points=(s.values||[]).map((v,i)=>`${x(i)},${y(v)}`).join(' ');
-        return <g key={s.name}>
-          <polyline points={points} fill="none" stroke={s.color} strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round"/>
-          {(s.values||[]).map((v,i)=><circle key={i} cx={x(i)} cy={y(v)} r="4.5" fill="#fff" stroke={s.color} strokeWidth="2.5"/>)}
-        </g>;
-      })}
-    </svg>
-  </div>;
-}
-
-function FinancialBars({title,subtitle,data}){
-  const entries=Object.entries(data||{}).filter(([,v])=>numericValue(v)>0).sort((a,b)=>numericValue(b[1])-numericValue(a[1])).slice(0,10);
-  const max=Math.max(...entries.map(([,v])=>numericValue(v)),1);
-  return <div className="card finance-ranking-card">
-    <div className="finance-chart-head"><div><span>ANÁLISE FINANCEIRA</span><h3>{title}</h3>{subtitle&&<p>{subtitle}</p>}</div></div>
-    {entries.length?<div className="finance-ranking-list">{entries.map(([label,value])=><div key={label} className="finance-ranking-row">
-      <div className="finance-ranking-label" title={label}>{label}</div>
-      <div className="finance-ranking-track"><i style={{width:`${Math.max(3,(numericValue(value)/max)*100)}%`}}/></div>
-      <b>{moneyBR(value)}</b>
-    </div>)}</div>:<div className="empty">Sem valores financeiros para os filtros atuais.</div>}
-  </div>;
-}
-
-function StatusTypeMatrix({title,subtitle,statuses,data,totalByStatus,labelName='Tipo'}){
-  return <div className="card status-matrix-card">
-    <div className="status-matrix-head">
-      <div><span>DETALHAMENTO POR STATUS</span><h3>{title}</h3><p>{subtitle}</p></div>
-    </div>
-    <div className="status-matrix-grid">
-      {statuses.map(status=>{
-        const rows=Object.entries(data?.[status]||{}).sort((a,b)=>b[1]-a[1]);
-        const total=totalByStatus?.[status]||0;
-        return <section className={`status-matrix-section ${statusClass(status)}`} key={status}>
-          <div className="status-matrix-title">
-            <div><span className={`status ${statusClass(status)}`}>{status}</span><small>{labelName}s dentro deste status</small></div>
-            <b>{total}</b>
-          </div>
-          {rows.length?<div className="status-type-list">
-            {rows.map(([name,value])=><div key={name}>
-              <span title={name}>{name}</span>
-              <div className="mini-bar"><i style={{width:`${total?Math.max(4,(value/total)*100):0}%`}}/></div>
-              <b>{value}</b>
-              <small>{percentOf(value,total)}%</small>
-            </div>)}
-          </div>:<div className="status-type-empty">Nenhum registro neste status.</div>}
-        </section>;
-      })}
-    </div>
-  </div>;
-}
-
-
-function DoctorTypeMatrix({title,subtitle,rows,itemLabel='Procedimento'}){
-  return <div className="card doctor-type-card">
-    <div className="doctor-type-head">
-      <div>
-        <span>ANÁLISE POR MÉDICO</span>
-        <h3>{title}</h3>
-        <p>{subtitle}</p>
-      </div>
-    </div>
-
-    {rows?.length ? <div className="doctor-type-grid">
-      {rows.map(row=><section className="doctor-type-section" key={row.doctor}>
-        <div className="doctor-type-title">
-          <div>
-            <b>{row.doctor}</b>
-            <small>{row.total} {row.total===1?'registro':'registros'}</small>
-          </div>
-          <strong>{row.total}</strong>
-        </div>
-
-        <div className="doctor-type-list">
-          {row.items.map(([name,value])=><div key={name}>
-            <span title={name}>{name}</span>
-            <div className="doctor-mini-bar"><i style={{width:`${row.total?Math.max(5,(value/row.total)*100):0}%`}}/></div>
-            <b>{value}</b>
-            <small>{percentOf(value,row.total)}%</small>
-          </div>)}
-        </div>
-      </section>)}
-    </div> : <div className="doctor-type-empty">
-      Nenhum dado de {itemLabel.toLowerCase()} disponível para os filtros atuais.
-    </div>}
-  </div>;
-}
 
 
 const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',eye='',detail='',associatedWithSurgery=false}) => {
@@ -774,9 +133,9 @@ const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',e
   const detailNorm=normalizeCatalogLabel(detail);
   const serviceNorm=normalizeCatalogLabel(name);
 
-  // Condições especiais da tabela de exames.
+  // Condições especiais da tabela oficial de exames.
   if(kind==='exam'&&serviceNorm.includes('consulta')){
-    if(ins.includes('saude vida')) return {amount:100,key:'exam-consulta-saude-vida',label:'Consulta - Saúde Vida + Organização',origin:'Convênio'};
+    if(ins.includes('saude vida')) return {amount:100,key:'exam-consulta-saude-vida',label:'Consulta - Saúde Vida + Organização (com guia)',origin:'Convênio'};
     if(ins.includes('vale saude')) return {amount:200,key:'exam-consulta-vale-saude',label:'Consulta - Vale Saúde',origin:'Convênio'};
   }
 
@@ -798,6 +157,28 @@ const automaticPriceForItem = ({kind,name,origin='Particular',insuranceName='',e
   }
 
   if(!pool.length) return null;
+
+  // Respeita os preços por olho exatamente como estão na tabela.
+  // Quando a tabela informa somente AO, não inventa valor para OD/OE.
+  const isBothEye=eyeNorm.includes('ambos')||eyeNorm==='ao';
+  const isSingleEye=eyeNorm.includes('direito')||eyeNorm.includes('esquerdo')||eyeNorm==='od'||eyeNorm==='oe';
+  const eyeScope=p=>{
+    const label=normalizeCatalogLabel(p.label);
+    return {
+      both:label.includes(' ao ')||label.endsWith(' ao')||label.includes('2 olhos'),
+      single:label.includes('cada olho')||label.includes('1 olho')
+    };
+  };
+  if(isBothEye){
+    const scoped=pool.filter(p=>eyeScope(p).both);
+    if(scoped.length) pool=scoped;
+  }else if(isSingleEye){
+    const scoped=pool.filter(p=>eyeScope(p).single);
+    if(scoped.length) pool=scoped;
+    else if(pool.length&&pool.every(p=>eyeScope(p).both)) return null;
+  }else if(pool.length&&pool.every(p=>eyeScope(p).both||eyeScope(p).single)){
+    return null;
+  }
 
   const score=p=>{
     const label=normalizeCatalogLabel(p.label);
@@ -882,369 +263,9 @@ const automaticPriceTotal = ({kind,names,origin,insuranceName,eye,detail}) => {
   return {amount:picked.reduce((sum,x)=>sum+x.amount,0),keys:picked.map(x=>x.key),labels:picked.map(x=>x.label)};
 };
 
-function PaymentTrafficLight({record,onClick}){
-  const tone=paymentTone(record);
-  const label=paymentToneLabel(record);
-  return <button type="button" className={`payment-light ${tone}`} onClick={onClick} title={`${label}. Clique para abrir o lançamento financeiro.`} aria-label={label}>
-    <span className="payment-light-dot"/>
-    <small>{label}</small>
-  </button>;
-}
-
-function PaymentBreakdownEditor({form,setForm,insurances}){
-  const rows=normalizedBreakdown(form.payment_breakdown);
-  const updateRows=next=>{
-    const received=next.filter(x=>x.status==='Recebido').reduce((s,x)=>s+numericValue(x.amount),0);
-    const payerTypes=[...new Set(next.map(x=>x.payer_type).filter(Boolean))];
-    const methods=[...new Set(next.map(x=>x.method).filter(Boolean))];
-    const net=Math.max(numericValue(form.total_amount)-numericValue(form.discount_amount),0);
-    const receivedDates=next.filter(x=>x.status==='Recebido'&&x.received_date).map(x=>x.received_date).sort();
-    const pendingDates=next.filter(x=>x.status!=='Recebido'&&x.expected_date).map(x=>x.expected_date).sort();
-    const billed=next.filter(x=>x.payer_type==='Convênio').reduce((s,x)=>s+numericValue(x.amount),0);
-    setForm({
-      ...form,
-      payment_breakdown:next,
-      received_amount:String(received||''),
-      payment_origin:payerTypes.length>1?'Misto':(payerTypes[0]||form.payment_origin||'Particular'),
-      payment_method:methods.length>1?'Múltiplos':(methods[0]||form.payment_method||''),
-      financial_status:net>0&&received>=net?'Recebido':received>0?'Parcial':(next.some(x=>x.payer_type==='Convênio')?'Aguardando convênio':'Pendente'),
-      payment_confirmed:true,
-      received_date:receivedDates.length?receivedDates[receivedDates.length-1]:(form.received_date||''),
-      expected_receipt_date:pendingDates[0]||form.expected_receipt_date||'',
-      billed_amount:String(billed||'')
-    });
-  };
-  const addRow=()=>updateRows([...rows,{id:crypto.randomUUID(),payer_type:'Particular',insurance_id:'',method:'PIX',amount:'',installments:'1',status:'Pendente',expected_date:'',received_date:''}]);
-  const setRow=(index,patch)=>updateRows(rows.map((r,i)=>i===index?{...r,...patch}:r));
-  const removeRow=index=>updateRows(rows.filter((_,i)=>i!==index));
-  return <div className="payment-breakdown full">
-    <div className="payment-breakdown-head">
-      <div><span>PAGAMENTOS</span><b>Como este valor será / foi recebido?</b><small>Adicione uma linha para cada pagamento. Em pagamento misto, registre separadamente convênio e particular.</small></div>
-      <button type="button" className="btn btn-light" onClick={addRow}>+ Adicionar pagamento</button>
-    </div>
-    {rows.length?<div className="payment-breakdown-list">{rows.map((row,index)=><div className="payment-breakdown-row simplified" key={row.id||index}>
-      <Field label="Pagador"><Select value={row.payer_type||'Particular'} setValue={v=>setRow(index,{payer_type:v,insurance_id:v==='Convênio'?row.insurance_id:''})} options={['Particular','Convênio']}/></Field>
-      {row.payer_type==='Convênio'?<Field label="Convênio"><Select value={row.insurance_id||''} setValue={v=>setRow(index,{insurance_id:v})} options={insurances} first="Selecione"/></Field>:null}
-      <Field label="Valor (R$)"><input type="number" min="0" step="0.01" value={row.amount||''} onChange={e=>setRow(index,{amount:e.target.value})}/></Field>
-      <Field label="Forma"><Select value={row.method||''} setValue={v=>setRow(index,{method:v})} options={['PIX','Dinheiro','Débito','Crédito','Crédito parcelado','Boleto','Transferência','Promissória','Convênio']} first="Selecione"/></Field>
-      <Field label="Parcelas"><Select value={String(row.installments||1)} setValue={v=>setRow(index,{installments:v})} options={Array.from({length:12},(_,i)=>String(i+1))}/></Field>
-      <Field label="Pagamento"><Select value={row.status==='Recebido'?'Pago':'Não pago'} setValue={v=>setRow(index,{status:v==='Pago'?'Recebido':'Pendente',received_date:v==='Pago'?(row.received_date||todayISO()):''})} options={['Pago','Não pago']}/></Field>
-      {row.status==='Recebido'
-        ? <Field label="Data do pagamento"><input type="date" value={row.received_date||''} onChange={e=>setRow(index,{received_date:e.target.value,status:'Recebido'})}/></Field>
-        : <Field label="Previsão / vencimento"><input type="date" value={row.expected_date||''} onChange={e=>setRow(index,{expected_date:e.target.value,status:'Pendente'})}/></Field>}
-      <button type="button" className="btn btn-danger-soft payment-row-remove" onClick={()=>removeRow(index)}>Remover</button>
-    </div>)}</div>:<div className="payment-breakdown-empty">Nenhum pagamento lançado. Clique em “Adicionar pagamento”.</div>}
-  </div>;
-}
-
-function RepassesEditor({form,setForm}){
-  const rows=Array.isArray(form.repasses)?form.repasses:[];
-  const setRows=repasses=>setForm({...form,repasses});
-  const addRow=()=>setRows([...rows,{id:crypto.randomUUID(),professional:'',type:'Honorário médico',amount:''}]);
-  const setRow=(index,patch)=>setRows(rows.map((r,i)=>i===index?{...r,...patch}:r));
-  const removeRow=index=>setRows(rows.filter((_,i)=>i!==index));
-  const total=rows.reduce((s,r)=>s+numericValue(r.amount),0);
-  return <div className="repasses-box full">
-    <div className="repasses-head"><div><span>REPASSES</span><b>Honorários e profissionais envolvidos</b><small>Deixe em branco quando não houver repasse.</small></div><button type="button" className="btn btn-light" onClick={addRow}>+ Adicionar repasse</button></div>
-    {rows.length?<><div className="repasses-list">{rows.map((row,index)=><div className="repasse-row" key={row.id||index}>
-      <Field label="Profissional"><input value={row.professional||''} onChange={e=>setRow(index,{professional:e.target.value})} placeholder="Ex.: Dra. Irene"/></Field>
-      <Field label="Tipo"><Select value={row.type||'Honorário médico'} setValue={v=>setRow(index,{type:v})} options={['Honorário médico','Anestesista','Auxiliar','Outro']}/></Field>
-      <Field label="Valor (R$)"><input type="number" min="0" step="0.01" value={row.amount||''} onChange={e=>setRow(index,{amount:e.target.value})}/></Field>
-      <button type="button" className="btn btn-danger-soft" onClick={()=>removeRow(index)}>Remover</button>
-    </div>)}</div><div className="repasse-total">Total previsto em repasses: <b>{moneyBR(total)}</b></div></>:<div className="payment-breakdown-empty">Nenhum repasse cadastrado.</div>}
-  </div>;
-}
-
-function FinanceQuickSummary({form,setForm}){
-  const net=Math.max(numericValue(form.total_amount)-numericValue(form.discount_amount),0);
-  const received=numericValue(form.received_amount);
-  const status=String(form.financial_status||'').toLowerCase();
-  const tone=status.includes('parcial')
-    ? 'partial'
-    : ((net>0&&received>=net)||status==='recebido')
-      ? 'paid'
-      : 'unpaid';
-  const paymentValue=!form.payment_confirmed?'':tone==='paid'?'Pago':tone==='partial'?'Pago parcial':'Não pago';
-  const balance=Math.max(net-received,0);
-
-  const changePayment=value=>{
-    if(!setForm) return;
-    if(value==='Pago'){
-      setForm({
-        ...form,
-        financial_status:'Recebido',
-        payment_confirmed:true,
-        received_amount:String(net||''),
-        received_date:form.received_date||todayISO()
-      });
-      return;
-    }
-    if(value==='Pago parcial'){
-      const current=received>0&&received<net?received:0;
-      setForm({
-        ...form,
-        financial_status:'Parcial',
-        payment_confirmed:true,
-        received_amount:String(current||''),
-        received_date:form.received_date||todayISO()
-      });
-      return;
-    }
-    setForm({
-      ...form,
-      financial_status:'Pendente',
-      payment_confirmed:true,
-      received_amount:'',
-      received_date:''
-    });
-  };
-
-  return <div className="finance-quick-summary full">
-    <div><span>Valor líquido</span><b>{moneyBR(net)}</b></div>
-    <div><span>Recebido</span><b>{moneyBR(received)}</b></div>
-    <div><span>Saldo</span><b>{moneyBR(balance)}</b></div>
-    <div className={`finance-summary-status ${tone}`}>
-      <span>Pagamento *</span>
-      <div className="finance-summary-payment-select">
-        <i/>
-        <select value={paymentValue} onChange={e=>changePayment(e.target.value)} aria-label="Pagamento" required>
-          <option value="" disabled>Selecione</option>
-          <option>Pago</option>
-          <option>Pago parcial</option>
-          <option>Não pago</option>
-        </select>
-      </div>
-    </div>
-  </div>;
-}
 
 
-const V36PaymentSummaryStyle = () => <style>{`
-  .finance-summary-payment-select{
-    display:flex;
-    align-items:center;
-    gap:8px;
-    margin-top:4px;
-  }
-  .finance-summary-payment-select>i{
-    width:10px;
-    height:10px;
-    border-radius:999px;
-    background:currentColor;
-    flex:0 0 auto;
-  }
-  .finance-summary-payment-select select{
-    width:100%;
-    min-width:132px;
-    border:1px solid rgba(49,95,114,.18);
-    border-radius:10px;
-    background:#fff;
-    color:#20313b;
-    font:inherit;
-    font-weight:700;
-    padding:7px 30px 7px 10px;
-    cursor:pointer;
-    outline:none;
-  }
-  .finance-summary-status.paid .finance-summary-payment-select{color:#4f8a6b}
-  .finance-summary-status.partial .finance-summary-payment-select{color:#b9802b}
-  .finance-summary-status.unpaid .finance-summary-payment-select{color:#b85c5c}
-  .finance-summary-payment-select select:focus{
-    border-color:#4d8191;
-    box-shadow:0 0 0 3px rgba(77,129,145,.12);
-  }
-  .auto-price-field{display:grid;gap:6px}.auto-price-field small{color:#667985;font-size:10px;line-height:1.45}.auto-price-field input{font-weight:800}.package-auto-price{display:block;margin-top:4px;color:#667985;font-size:9px}.brand-mark.brand-logo-ready{padding:0;background:transparent;box-shadow:none;overflow:visible}.brand-mark.brand-logo-ready img{display:block;width:100%;height:100%;object-fit:contain}.brand-mark span{display:grid;place-items:center;width:100%;height:100%}
-`}</style>;
 
-
-const V40LoginPriceStyle = () => <style>{`
-  .user-box small{display:block;margin-top:5px;color:#83929a;font-size:9px;line-height:1.35}
-`}</style>;
-const V42AlignmentStyle = () => <style>{`
-  .filter-check-section{display:flex;flex-direction:column;gap:7px}.filter-check-section>label{font-size:12px;font-weight:800;color:#52636b;text-transform:uppercase;letter-spacing:.04em}.filter-check-grid{display:flex;gap:8px;flex-wrap:wrap}.filter-check{display:inline-flex;align-items:center;gap:8px;border:1px solid #d6e0e2;background:#fff;color:#40525b;border-radius:10px;padding:8px 11px;font:inherit;font-weight:700;cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,background .18s ease,border-color .18s ease;position:relative;overflow:hidden}.filter-check::after{content:'';position:absolute;inset:0;background:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.65) 50%,transparent 65%);transform:translateX(-140%);transition:transform .45s ease}.filter-check:hover{transform:translateY(-2px) scale(1.015)}.filter-check:active{transform:scale(.97)}.filter-check.selected{animation:filterPop .28s ease}.filter-check.selected::after{transform:translateX(140%)}@keyframes filterPop{0%{transform:scale(.94)}60%{transform:scale(1.04)}100%{transform:scale(1)}}.filter-check span{display:grid;place-items:center;width:18px;height:18px;border:1px solid #bdcacc;border-radius:5px;background:#fff;color:#fff;font-size:12px}.filter-check:hover{border-color:#8eaaa0;background:#f7faf9}.filter-check.selected{border-color:#75a48e;background:#eaf5ef;color:#315f4c;box-shadow:0 0 0 2px rgba(79,138,107,.08)}.filter-check.selected span{background:#4f8a6b;border-color:#4f8a6b}.daily-report-filters{align-items:flex-end}.daily-report-filters .full{grid-column:1/-1}.promissory-status{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800}.promissory-status.paid{background:#e8f4ed;color:#397156}.promissory-status.partial{background:#fff4dc;color:#9a671d}.promissory-status.open{background:#edf1f3;color:#55646b}.promissory-status.overdue{background:#fbeaea;color:#a94a4a}.finance-kpi.danger{border-top-color:#b85c5c}.promissory-page .finance-table td{vertical-align:middle}
-
-  .period-filter{display:flex;gap:6px;align-items:center;min-width:210px}.period-filter select{max-width:80px}.period-filter input{min-width:132px}
-  .form-validation-banner{display:flex;flex-direction:column;gap:4px;background:#fff1f1;border:1px solid #e4a1a1;color:#963f3f;border-radius:12px;padding:12px 14px;animation:validationShake .34s ease}
-  .form-validation-banner strong{font-size:14px}.form-validation-banner span{font-size:12px}
-  @keyframes validationShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}50%{transform:translateX(5px)}75%{transform:translateX(-3px)}}
-  .field-error label{color:#a74343!important}.field-error input,.field-error select,.field-error textarea,.field-error .exam-multi-select,.field-error .procedure-multi-select,.field-error .finance-quick-summary{border-color:#c75a5a!important;background:#fff8f8!important;box-shadow:0 0 0 3px rgba(199,90,90,.09)!important}
-`}</style>;
-
-function PeriodFilter({mode,setMode,month,setMonth,date,setDate}){
-  return <div className="period-filter">
-    <select value={mode} onChange={e=>{
-      const next=e.target.value;setMode(next);
-      if(next==='month') setDate(''); else setMonth('');
-    }}>
-      <option value="month">Mês</option><option value="date">Data</option>
-    </select>
-    {mode==='month'
-      ? <input type="month" value={month} onChange={e=>setMonth(e.target.value)}/>
-      : <input type="date" value={date} onChange={e=>setDate(e.target.value)}/>}
-  </div>;
-}
-
-function Modal({open,onClose,title,subtitle,children,onSave,saveText}){
-  if(!open) return null;
-  return <div className="modal" onMouseDown={e=>{if(e.target===e.currentTarget) onClose();}}>
-    <div className="card modal-card">
-      <div className="modal-head">
-        <div><h2>{title}</h2>{subtitle&&<p>{subtitle}</p>}</div>
-        <button className="icon-close" onClick={onClose}>×</button>
-      </div>
-      {children}
-      <div className="form-actions">
-        <button className="btn btn-light" onClick={onClose}>Cancelar</button>
-        <button className="btn btn-primary" onClick={onSave}>{saveText}</button>
-      </div>
-    </div>
-  </div>;
-}
-
-function PatientCell({name,phone,birthDate}){
-  const url = whatsappUrl(phone);
-  return <div className="patient-cell">
-    <div><b>{name}</b>{birthDate&&<small>Nasc.: {brDate(birthDate)}</small>}{phone&&<small>{phone}</small>}</div>
-    {url&&<a className="wa-btn" href={url} target="_blank" rel="noreferrer" title={`Abrir WhatsApp de ${name}`}><WhatsAppIcon/></a>}
-  </div>;
-}
-function ObservationCell({text}) {
-  return text ? <div className="obs-cell" title={text}>{text}</div> : <span className="muted">—</span>;
-}
-function LinkedProceduresCell({names=[]}){
-  const items=(Array.isArray(names)?names:[]).filter(Boolean);
-  if(!items.length) return <span className="muted">Sem procedimentos vinculados</span>;
-  return <div className="linked-procedures-cell">
-    <small>Vinculados ao pacote</small>
-    <div>{items.map((name,index)=><span className="linked-procedure-chip" key={`${name}-${index}`}>{name}</span>)}</div>
-  </div>;
-}
-
-function ProcedureListCell({names=[]}){
-  const items=(Array.isArray(names)?names:[]).filter(Boolean);
-  if(!items.length) return <span className="muted">—</span>;
-  return <div className="procedure-launch-cell">
-    <small>{items.length} {items.length===1?'procedimento':'procedimentos'} neste lançamento</small>
-    <div>{items.map((name,index)=><span className="linked-procedure-chip" key={`${name}-${index}`}>{name}</span>)}</div>
-  </div>;
-}
-function Kpi({label,value}){return <div className="kpi"><small>{label}</small><strong>{value}</strong></div>;}
-
-const statusClass = status => String(status||'')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g,'')
-  .toLowerCase()
-  .replace(/\s+/g,'-');
-
-function Select({value,setValue,options,first}) {
-  return <select value={value} onChange={e=>setValue(e.target.value)}>
-    {first&&<option value="">{first}</option>}
-    {options.map(o=>{
-      const value = typeof o === 'string' ? o : o.id;
-      const label = typeof o === 'string' ? o : o.name;
-      return <option key={value} value={value}>{label}</option>
-    })}
-  </select>;
-}
-function Field({label,children,full}){return <div className={full?'full':''}><label>{label}</label>{children}</div>;}
-
-function accessLabel(profile){
-  if(!profile) return 'Usuário';
-  return profile.role === 'admin' ? 'Administrador' : 'Orientadora';
-}
-
-function BrandMark(){
-  const [failed,setFailed]=useState(false);
-  return <div className={`brand-mark ${failed?'':'brand-logo-ready'}`} aria-label="OftalmoCastro">
-    {failed
-      ? <span>OC</span>
-      : <img src="/logo-oftalmocastro.png" alt="OftalmoCastro" onError={()=>setFailed(true)}/>}
-  </div>;
-}
-
-function Login({onLogged}) {
-  const [email,setEmail] = useState('');
-  const [password,setPassword] = useState('');
-  const [showPassword,setShowPassword] = useState(false);
-  const [loading,setLoading] = useState(false);
-  const [error,setError] = useState('');
-
-  const login = async e => {
-    e.preventDefault();
-    setLoading(true); setError('');
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if(error){ setError('E-mail ou senha inválidos.'); setLoading(false); return; }
-    onLogged(data.session);
-    setLoading(false);
-  };
-
-  return <div className="login-page">
-    <form className="login-card" onSubmit={login}>
-      <BrandMark/>
-      <h1>Oftalmocastro</h1>
-      <p>Gestão de exames e cirurgias</p>
-      <Field label="E-mail"><input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></Field>
-      <Field label="Senha">
-        <div className="password-field">
-          <input type={showPassword ? 'text' : 'password'} value={password} onChange={e=>setPassword(e.target.value)} required />
-          <button type="button" className="password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
-            {showPassword ? 'Ocultar' : 'Ver'}
-          </button>
-        </div>
-      </Field>
-      {error&&<div className="login-error">{error}</div>}
-      <button className="btn btn-primary login-btn" disabled={loading}>{loading?'Entrando...':'Entrar'}</button>
-    </form>
-  </div>;
-}
-
-function FinancialDocumentsField({form,setForm,onOpen,onDownload}){
-  const saved=Array.isArray(form.financial_documents)?form.financial_documents:[];
-  const pending=Array.isArray(form.pending_documents)?form.pending_documents:[];
-  const formatSize=bytes=>{
-    const n=Number(bytes||0);
-    if(!n) return '';
-    if(n<1024*1024) return `${Math.max(1,Math.round(n/1024))} KB`;
-    return `${(n/(1024*1024)).toFixed(1)} MB`;
-  };
-  const addFiles=e=>{
-    const incoming=[...(e.target.files||[])];
-    if(!incoming.length) return;
-    const allowed=new Set(['application/pdf','image/png','image/jpeg','image/webp']);
-    const maxSize=15*1024*1024;
-    const valid=incoming.filter(file=>allowed.has(file.type)&&file.size<=maxSize);
-    const invalidType=incoming.filter(file=>!allowed.has(file.type));
-    const tooLarge=incoming.filter(file=>file.size>maxSize);
-    if(invalidType.length) alert(`Alguns arquivos não foram adicionados. Formatos aceitos: PDF, PNG, JPG/JPEG e WEBP.`);
-    if(tooLarge.length) alert(`Alguns arquivos ultrapassam 15 MB e não foram adicionados.`);
-    setForm({...form,pending_documents:[...pending,...valid]});
-    e.target.value='';
-  };
-  const removeSaved=doc=>{
-    setForm({
-      ...form,
-      financial_documents:saved.filter(item=>item.path!==doc.path),
-      removed_document_paths:[...new Set([...(form.removed_document_paths||[]),doc.path])]
-    });
-  };
-  const removePending=index=>setForm({...form,pending_documents:pending.filter((_,i)=>i!==index)});
-  return <div className="financial-documents full">
-    <div className="documents-upload-zone">
-      <div><b>Nota fiscal / comprovantes</b><small>Você pode anexar vários arquivos: PDF, PNG, JPG/JPEG ou WEBP.</small></div>
-      <label className="btn btn-light document-picker"><Upload size={15}/> Selecionar arquivos<input type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp" onChange={addFiles}/></label>
-    </div>
-    {(saved.length||pending.length)?<div className="documents-list">
-      {saved.map(doc=><div className="document-chip saved" key={doc.path}>
-        <div className="document-icon">✓</div><div className="document-meta"><b>{doc.name||'Documento anexado'}</b><small>{formatSize(doc.size)}{doc.type?` • ${doc.type.replace('application/','').replace('image/','').toUpperCase()}`:''}</small></div>
-        <div className="document-actions"><button type="button" className="btn btn-light" onClick={()=>onOpen(doc.path,doc.name)}><Eye size={14}/> Visualizar</button><button type="button" className="btn btn-light" onClick={()=>onDownload?.(doc.path,doc.name)}><Download size={14}/> Baixar</button><button type="button" className="btn btn-danger-soft" onClick={()=>removeSaved(doc)}><Trash2 size={14}/> Remover</button></div>
-      </div>)}
-      {pending.map((file,index)=><div className="document-chip pending" key={`${file.name}-${file.size}-${index}`}>
-        <div className="document-icon">↑</div><div className="document-meta"><b>{file.name}</b><small>{formatSize(file.size)} • será enviado ao salvar</small></div>
-        <div className="document-actions"><button type="button" className="btn btn-danger-soft" onClick={()=>removePending(index)}><Trash2 size={14}/> Remover</button></div>
-      </div>)}
-    </div>:<div className="documents-empty">Nenhum documento anexado.</div>}
-  </div>;
-}
 
 
 const UNIMED_STEP1_DOCUMENTS = [
@@ -1273,168 +294,6 @@ const UNIMED_STEP1_DOC_STATUS = ['Pendente','Recebido','Conferido','Devolvido'];
 const UNIMED_STEP1_DOSSIER_STATUS = ['Aguardando documentos','Em conferência','Enviado ao Faturamento','Devolvido à Recepção','Devolvido ao Centro Cirúrgico','Concluído'];
 const UNIMED_STEP_STATUS = ['Não iniciada','Em andamento','Concluída'];
 
-const FINANCE_RISK_OPTIONS=[['','Risco: definir'],['baixo','Risco baixo'],['medio','Risco médio'],['alto','Risco alto']];
-const FINANCE_COMPLEXITY_OPTIONS=[['','Complexidade: definir'],['baixo','Complexidade baixa'],['medio','Complexidade média'],['alto','Complexidade alta']];
-const FINANCE_DELEGATION_OPTIONS=[['','Delegação: definir'],['nao','Mantém com o gestor'],['sim','Delegar para…']];
-const FINANCE_RECURRENCE=['Todos os dias','Dia que tem procedimento','Quando tem pedido','1x por semana','2x ao mês','1x mês','1x mês até dia 10'];
-const financeLevelScore={baixo:0,medio:1,alto:2};
-const financeLevelLabel=v=>v==='baixo'?'baixo':v==='medio'?'médio':v==='alto'?'alto':'a definir';
-const financeLevelClass=v=>v==='baixo'?'ok':v==='medio'?'attention':v==='alto'?'danger':'neutral';
-const financeStepEvaluated=s=>Boolean(s?.risco&&s?.complexidade&&s?.delegar);
-const financeDateBR=value=>{if(!value)return '';const d=new Date(value);return Number.isNaN(d.getTime())?'':d.toLocaleDateString('pt-BR');};
-const financeUid=()=>crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const financeInitialStep={id:'unimed-etapa-1',texto:'Reunir todas as cirurgias realizadas: folhas de sala, autorizações e prontuário físico do paciente',delegar:'sim',responsavel:'Centro Cirúrgico',risco:'alto',complexidade:'medio'};
-const financeStep1Pop={
-  objetivo:'Reunir, organizar e conferir a documentação obrigatória de cada cirurgia Unimed para que o Faturamento receba o dossiê completo e sem pendências.',
-  quando:'Ao final de cada cirurgia, antes do envio ao Faturamento.',
-  responsavel:'Centro Cirúrgico',
-  sistemas:['Prontuário físico','Autorização do convênio','Folha de sala'],
-  passos:[
-    {titulo:'Receber a documentação da Recepção',detalhe:'Receber autorização e termo de consentimento já assinados pelo paciente.',alerta:'A autorização deve também estar assinada e carimbada pelo médico responsável.',responsavel:'Centro Cirúrgico'},
-    {titulo:'Completar a documentação da sala',detalhe:'Após a cirurgia, preencher a folha de sala, registrar horários de início e término e aplicar o selo correspondente ao procedimento.',alerta:'Aplicação = selo da injeção intravítrea; catarata = selo da lente intraocular; autotransplante conjuntival = selo da cola biológica.',responsavel:'Centro Cirúrgico'},
-    {titulo:'Conferir a descrição cirúrgica',detalhe:'O médico preenche a descrição cirúrgica na folha de sala após desfazer a paramentação.',alerta:'Autorização, descrição cirúrgica e folha de anestesia devem estar carimbadas pelo médico e pelo auxiliar.',responsavel:'Médico / Centro Cirúrgico'},
-    {titulo:'Conferir o prestador de execução',detalhe:'Antes de liberar o dossiê, confirmar que a execução foi registrada no prestador/login 714 - clínica Oftalmo Castro.',alerta:'Nunca executar a cirurgia Unimed em nome do médico.',responsavel:'Centro Cirúrgico'},
-    {titulo:'Montar e enviar o dossiê',detalhe:'Juntar autorização, termo, folha de sala, descrição, folha de anestesia quando houver, entrevista da enfermagem e prontuário físico; grampear, conferir e enviar ao Faturamento.',alerta:'Documento faltando pode gerar glosa total.',responsavel:'Centro Cirúrgico'}
-  ],
-  atencao:['Execução sempre pelo prestador/login 714 - clínica Oftalmo Castro.','Falta de assinatura/carimbo do médico na autorização: devolver à Recepção.','Falta de preenchimento, carimbo ou assinatura na folha de sala ou descrição cirúrgica: devolver ao Centro Cirúrgico.','Conferir selo, horários, assinaturas e carimbos antes do envio.'],
-  duvidas:'Quando o Faturamento devolver por assinatura/carimbo na autorização, a correção é da Recepção. Pendências de folha de sala ou descrição cirúrgica retornam ao Centro Cirúrgico.'
-};
-
-function TasksPopsPanel({profile,session}){
-  const canWrite=profile?.role==='admin'||profile?.role==='orientadora';
-  const canUpload=canWrite;
-  const canAdmin=profile?.role==='admin';
-  const storageKey=`oc_finance_tasks_tab_${session?.user?.id||'user'}`;
-  const [tab,setTabState]=useState(()=>localStorage.getItem(storageKey)||'tarefas');
-  const setTab=v=>{setTabState(v);try{localStorage.setItem(storageKey,v)}catch{}};
-  const [loading,setLoading]=useState(true);
-  const [notice,setNotice]=useState('Carregando as tarefas…');
-  const [tasks,setTasks]=useState([]); const [pops,setPops]=useState([]); const [videos,setVideos]=useState([]); const [materials,setMaterials]=useState([]); const [submissions,setSubmissions]=useState([]);
-  const [filter,setFilter]=useState('todas'); const [openTasks,setOpenTasks]=useState(()=>new Set());
-  const [editor,setEditor]=useState(null); const [popTask,setPopTask]=useState(null); const [popScrollUpload,setPopScrollUpload]=useState(false); const [busy,setBusy]=useState('');
-  const [inlineDelete,setInlineDelete]=useState(''); const [materialPicker,setMaterialPicker]=useState(null); const [viewer,setViewer]=useState(null);
-  const taskRefs=useRef({}); const responsibleInputRefs=useRef({});
-
-  const flash=(message,ms=6000)=>{setNotice(message);if(ms)setTimeout(()=>setNotice(v=>v===message?'':v),ms)};
-  const dbError=(error,fallback)=>{console.error(error);flash(`${fallback} (${error?.code||'erro'}).`,6000)};
-  const load=async(silent=false)=>{
-    if(!silent){setLoading(true);setNotice('Carregando as tarefas…')}
-    const [t,p,v,m,e]=await Promise.all([
-      supabase.from('finance_tasks').select('*').eq('cargo','financeiro').order('ordem',{ascending:true}),
-      supabase.from('finance_pops').select('*'), supabase.from('finance_videos').select('*').order('enviado_em',{ascending:false}),
-      supabase.from('finance_materials').select('*').order('enviado_em',{ascending:false}), supabase.from('finance_submissions').select('*').order('enviado_em',{ascending:false})
-    ]);
-    const firstError=[t,p,v,m,e].find(x=>x.error)?.error;
-    if(firstError){setLoading(false);return dbError(firstError,'Não foi possível carregar os dados')}
-    setTasks(t.data||[]);setPops(p.data||[]);setVideos(v.data||[]);setMaterials(m.data||[]);setSubmissions(e.data||[]);setLoading(false);setNotice('');
-  };
-  useEffect(()=>{load();},[]);
-  useEffect(()=>{
-    const ch=supabase.channel('finance-tasks-pops-live')
-      .on('postgres_changes',{event:'*',schema:'public',table:'finance_tasks'},()=>load(true))
-      .on('postgres_changes',{event:'*',schema:'public',table:'finance_pops'},()=>load(true))
-      .on('postgres_changes',{event:'*',schema:'public',table:'finance_videos'},()=>load(true))
-      .on('postgres_changes',{event:'*',schema:'public',table:'finance_materials'},()=>load(true))
-      .on('postgres_changes',{event:'*',schema:'public',table:'finance_submissions'},()=>load(true)).subscribe();
-    return()=>{supabase.removeChannel(ch)};
-  },[]);
-
-  const taskPop=t=>pops.find(p=>p.id===t.id)||null;
-  const taskVideos=t=>videos.filter(v=>v.tarefa_id===t.id);
-  const taskSubmissions=t=>submissions.filter(v=>v.tarefa_id===t.id);
-  const popState=t=>{
-    const vids=taskVideos(t);const env=taskSubmissions(t);const p=taskPop(t);
-    if(vids.some(v=>v.status!=='processado')||env.some(x=>x.status==='aguardando'))return{tone:'attention',label:'Vídeo recebido · atualizando'};
-    if(p?.status==='validado')return{tone:'ok',label:`POP validado v${p.versao||1}`};
-    if(p)return{tone:'neutral',label:`Rascunho v${p.versao||1}`};return{tone:'neutral',label:'Sem POP'};
-  };
-  const totalSteps=tasks.reduce((s,t)=>s+(t.subtarefas||[]).length,0); const delegated=tasks.reduce((s,t)=>s+(t.subtarefas||[]).filter(x=>x.delegar==='sim').length,0); const popVideoCount=tasks.filter(t=>taskVideos(t).length>0).length;
-  const filteredTasks=tasks.filter(t=>{const steps=t.subtarefas||[];if(filter==='sem-video')return taskVideos(t).length===0;if(filter==='avaliacao')return steps.some(s=>!financeStepEvaluated(s));if(filter==='delegadas')return steps.some(s=>s.delegar==='sim');return true;});
-  const toggleTask=id=>setOpenTasks(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n});
-  const scrollTask=id=>{setTab('tarefas');setFilter('todas');setOpenTasks(prev=>new Set([...prev,id]));setTimeout(()=>taskRefs.current[id]?.scrollIntoView({behavior:'smooth',block:'center'}),80)};
-  const updateStep=async(task,index,patch)=>{
-    const steps=[...(task.subtarefas||[])];steps[index]={...steps[index],...patch};if(patch.delegar!=='sim'&&'delegar'in patch)steps[index].responsavel='';
-    setTasks(prev=>prev.map(t=>t.id===task.id?{...t,subtarefas:steps}:t));
-    const {error}=await supabase.from('finance_tasks').update({subtarefas:steps,atualizado_em:new Date().toISOString(),atualizado_por:session.user.id}).eq('id',task.id);
-    if(error){dbError(error,'Não foi possível salvar');load(true)}else flash('Salvo',1600);
-  };
-  const newTask=()=>setEditor({mode:'new',id:null,tarefa:'',recorrencia:'',subtarefas:[{id:financeUid(),texto:'',delegar:'',responsavel:'',risco:'',complexidade:''}]});
-  const editTask=t=>setEditor({mode:'edit',id:t.id,tarefa:t.tarefa||'',recorrencia:t.recorrencia||'',subtarefas:(t.subtarefas||[]).map(x=>({...x}))});
-  const saveTask=async()=>{
-    if(!editor?.tarefa?.trim())return flash('Dê um nome para a tarefa.',4000);
-    const steps=(editor.subtarefas||[]).map(s=>({...s,texto:String(s.texto||'').trim()})).filter(s=>s.texto); const now=new Date().toISOString();
-    if(editor.mode==='new'){
-      const nums=tasks.map(t=>Number(String(t.codigo||'').match(/(\d+)/)?.[1]||0));const next=(Math.max(0,...nums)+1);const maxOrder=Math.max(0,...tasks.map(t=>Number(t.ordem||0)));
-      const row={codigo:`FIN-${String(next).padStart(2,'0')}`,ordem:maxOrder+1,cargo:'financeiro',recorrencia:editor.recorrencia.trim(),tarefa:editor.tarefa.trim(),subtarefas:steps,expected_steps:steps.length,criado_em:now,criado_por:session.user.id,atualizado_em:now,atualizado_por:session.user.id};
-      const {data,error}=await supabase.from('finance_tasks').insert(row).select('*').single();if(error)return dbError(error,'Não foi possível salvar');setEditor(null);flash('Tarefa criada.',3000);if(data)scrollTask(data.id);
-    }else{
-      const original=tasks.find(t=>t.id===editor.id);const merged=steps.map(s=>{const old=(original?.subtarefas||[]).find(x=>x.id===s.id);return old?{...old,...s}:s});
-      const {error}=await supabase.from('finance_tasks').update({tarefa:editor.tarefa.trim(),recorrencia:editor.recorrencia.trim(),subtarefas:merged,atualizado_em:now,atualizado_por:session.user.id}).eq('id',editor.id);if(error)return dbError(error,'Não foi possível salvar');setEditor(null);flash('Alterações salvas.',3000);
-    }
-  };
-  const duplicateTask=async t=>{setBusy(`dup:${t.id}`);const nums=tasks.map(x=>Number(String(x.codigo||'').match(/(\d+)/)?.[1]||0));const next=Math.max(0,...nums)+1;const sorted=[...tasks].sort((a,b)=>Number(a.ordem||9999)-Number(b.ordem||9999));const idx=sorted.findIndex(x=>x.id===t.id);const following=sorted[idx+1];const order=following?((Number(t.ordem||0)+Number(following.ordem||0))/2):Math.max(0,...tasks.map(x=>Number(x.ordem||0)))+1;const now=new Date().toISOString();
-    const row={codigo:`FIN-${String(next).padStart(2,'0')}`,ordem:order,cargo:t.cargo||'financeiro',recorrencia:t.recorrencia||'',tarefa:`Cópia de ${t.tarefa||''}`,subtarefas:(t.subtarefas||[]).map(s=>({...s,id:financeUid()})),expected_steps:t.expected_steps||((t.subtarefas||[]).length),duplicada_de:t.id,criado_em:now,criado_por:session.user.id,atualizado_em:now,atualizado_por:session.user.id};
-    const {data,error}=await supabase.from('finance_tasks').insert(row).select('*').single();setBusy('');if(error)return dbError(error,'Não foi possível duplicar');setFilter('todas');if(data){setEditor({mode:'edit',id:data.id,tarefa:data.tarefa,recorrencia:data.recorrencia,subtarefas:data.subtarefas||[]});scrollTask(data.id)}};
-  const deleteTask=async t=>{const {error}=await supabase.from('finance_tasks').delete().eq('id',t.id);if(error)return dbError(error,'Não foi possível excluir');setInlineDelete('');flash('Tarefa excluída.',2500)};
-
-  const openPop=(t,toUpload=false)=>{setPopTask(t);setPopScrollUpload(toUpload)};
-  const uploadVideo=async(task,step,file)=>{
-    if(!file)return;const ext=String(file.name||'').split('.').pop().toLowerCase();const allowed=['mp4','m4v','mov','qt','webm'];if(!allowed.includes(ext))return flash(`Formato .${ext||'?'} não aceito. Envie em MP4 ou WebM.`,6000);const mb=file.size/1024/1024;if(mb>20)return flash(`O vídeo tem ${mb.toFixed(1)} MB; o limite é 20 MB. Grave a etapa em partes menores.`,6000);
-    const head=new Uint8Array(await file.slice(0,12).arrayBuffer());const isWebm=head[0]===0x1a&&head[1]===0x45&&head[2]===0xdf&&head[3]===0xa3;const text=String.fromCharCode(...head.slice(4,8));const isMp4=text==='ftyp';if(!isWebm&&!isMp4)return flash('Este arquivo não é um vídeo de verdade. Abra o vídeo no computador para conferir e exporte de novo em MP4.',6000);
-    setBusy(`video:${step?.id||task.id}`);const path=`finance-pops/videos/${task.id}/${financeUid()}-${file.name.replace(/[^a-zA-Z0-9._-]+/g,'-')}`;const {error:upErr}=await supabase.storage.from('portal-files').upload(path,file,{contentType:isWebm?'video/webm':'video/mp4'});if(upErr){setBusy('');return dbError(upErr,'O envio falhou')};const {data:urlData}=supabase.storage.from('portal-files').getPublicUrl(path);const row={tarefa_id:task.id,codigo:task.codigo,tarefa:task.tarefa,etapa_id:step?.id||null,etapa_num:step?(task.subtarefas||[]).findIndex(s=>s.id===step.id)+1:null,etapa_texto:step?.texto||null,arquivo_id:path,url:urlData?.publicUrl||'',nome_arquivo:file.name,tamanho_mb:Number(mb.toFixed(2)),enviado_em:new Date().toISOString(),enviado_por:session.user.id,status:'aguardando'};const {error}=await supabase.from('finance_videos').insert(row);setBusy('');if(error)return dbError(error,'O envio falhou');flash('Recebido. O POP será atualizado na próxima rodada.',8000)};
-  const registerDrive=async(task,step,link,obs='')=>{if(!/^https:\/\/(drive|docs)\.google\.com\//i.test(link||''))return flash('O link precisa ser do Google Drive (drive.google.com).',5000);const id=(String(link).match(/\/d\/([A-Za-z0-9_-]{20,})/)||String(link).match(/[?&]id=([A-Za-z0-9_-]{20,})/))?.[1];if(!id)return flash('Cole o link do arquivo de vídeo (botão Compartilhar → Copiar link no Drive).',6000);const {error}=await supabase.from('finance_submissions').insert({tarefa_id:task.id,codigo:task.codigo,tarefa:task.tarefa,etapa_id:step?.id||null,etapa_num:step?(task.subtarefas||[]).findIndex(s=>s.id===step.id)+1:null,etapa_texto:step?.texto||null,drive_id:id,drive_link:link,enviado_em:new Date().toISOString(),enviado_por:session.user.id,status:'aguardando',mensagem:obs||null});if(error)return dbError(error,'Não foi possível registrar o link');flash('Link registrado. O vídeo entra no portal na próxima rodada automática.',8000)};
-  const importMaterial=async(task,step,type,file)=>{if(!file)return;const head=new Uint8Array(await file.slice(0,5).arrayBuffer());const signature=String.fromCharCode(...head);if(!file.name.toLowerCase().endsWith('.pdf')||signature!=='%PDF-')return flash('Esse arquivo não é um PDF. No Word ou PowerPoint, use Arquivo › Salvar como › PDF e importe de novo.',7000);const mb=file.size/1024/1024;if(mb>20)return flash(`O PDF tem ${mb.toFixed(1)} MB; o limite é 20 MB.`,6000);setBusy(`material:${step.id}:${type}`);const previous=materials.filter(m=>m.tarefa_id===task.id&&m.etapa_id===step.id&&m.tipo===type);for(const old of previous){if(old.arquivo_id)await supabase.storage.from('portal-files').remove([old.arquivo_id]);await supabase.from('finance_materials').delete().eq('id',old.id)}const path=`finance-pops/materials/${task.id}/${step.id}/${type}-${financeUid()}.pdf`;const {error:upErr}=await supabase.storage.from('portal-files').upload(path,file,{contentType:'application/pdf'});if(upErr){setBusy('');return dbError(upErr,'A importação falhou')};const {data:urlData}=supabase.storage.from('portal-files').getPublicUrl(path);const {error}=await supabase.from('finance_materials').insert({tarefa_id:task.id,codigo:task.codigo,tarefa:task.tarefa,etapa_id:step.id,etapa_num:(task.subtarefas||[]).findIndex(s=>s.id===step.id)+1,etapa_texto:step.texto,tipo:type,nome_arquivo:file.name,tamanho_mb:Number(mb.toFixed(2)),enviado_em:new Date().toISOString(),enviado_por:session.user.id,arquivo_id:path,url:urlData?.publicUrl||'',status:'pdf'});setBusy('');setMaterialPicker(null);if(error)return dbError(error,'A importação falhou');flash(`${type==='pop'?'POP':'Cartão de execução'} importado.`,6000)};
-  const openMaterial=async m=>{const {data,error}=await supabase.storage.from('portal-files').createSignedUrl(m.arquivo_id,600);if(error)return dbError(error,'Não foi possível abrir');setViewer({...m,signedUrl:data.signedUrl})};
-
-  const mapCells=()=>{const rows=['alto','medio','baixo'],cols=['baixo','medio','alto'];return rows.map(r=>cols.map(c=>({r,c,steps:tasks.flatMap(t=>(t.subtarefas||[]).map((s,i)=>({task:t,step:s,index:i}))).filter(x=>x.step.risco===r&&x.step.complexidade===c)})))};
-  const responsibleGroups=useMemo(()=>{const map=new Map();tasks.forEach(t=>(t.subtarefas||[]).forEach((s,i)=>{if(s.delegar==='sim'){const key=(s.responsavel||'Delegadas sem responsável').trim()||'Delegadas sem responsável';const normalized=key.toLocaleLowerCase('pt-BR');if(!map.has(normalized))map.set(normalized,{name:key,items:[]});map.get(normalized).items.push({task:t,step:s,index:i})}}));return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));},[tasks]);
-  const managerCount=tasks.reduce((n,t)=>n+(t.subtarefas||[]).filter(s=>s.delegar==='nao').length,0);const undecided=tasks.reduce((n,t)=>n+(t.subtarefas||[]).filter(s=>!s.delegar).length,0);
-
-  return <section className="finance-task-page">
-    <div className="topbar"><div><div className="eyebrow">PORTAL DA EQUIPE • FINANCEIRO</div><h1>Gerente de Administração Financeira</h1><div className="subtitle">Faturamento e fechamento dos convênios, conferência de guias e folhas de sala, repasse médico, caixa diário e solicitações de cirurgia.</div></div><div className="finance-task-indicators"><div><b>{loading?'–':tasks.length}</b><span>tarefas</span></div><div><b>{loading?'–':popVideoCount}</b><span>POPs com vídeo</span></div><div><b>{loading?'–':delegated}</b><span>etapas delegadas</span></div></div></div>
-    {notice&&<div className={`finance-task-notice ${notice.includes('Não foi possível')||notice.includes('falhou')?'error':''}`}>{notice}</div>}
-    <div className="finance-task-tabs">{[['tarefas','Tarefas'],['mapa','Mapa de delegação'],['responsavel','Por responsável'],['pops','POPs']].map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div>
-
-    {tab==='tarefas'&&<div className="finance-task-tab-body">
-      <div className="finance-task-toolbar"><div className="finance-filter-pills">{[['todas','Todas',tasks.length],['sem-video','Sem vídeo',tasks.filter(t=>taskVideos(t).length===0).length],['avaliacao','Avaliação a definir',tasks.filter(t=>(t.subtarefas||[]).some(s=>!financeStepEvaluated(s))).length],['delegadas','Com etapas delegadas',tasks.filter(t=>(t.subtarefas||[]).some(s=>s.delegar==='sim')).length]].map(([id,label,count])=><button key={id} className={filter===id?'active':''} onClick={()=>setFilter(id)}>{label} <b>{count}</b></button>)}</div>{canWrite&&<button className="btn btn-primary" onClick={newTask}>+ Nova tarefa</button>}</div>
-      {!loading&&!tasks.length?<div className="card finance-empty"><h3>Nenhuma tarefa cadastrada ainda</h3><p>{canWrite?'Use “Nova tarefa” para incluir a primeira: recorrência, descrição e as etapas para a entrega acontecer.':'As tarefas do cargo aparecem aqui assim que forem cadastradas.'}</p></div>:!filteredTasks.length?<div className="card finance-empty">Nenhuma tarefa neste filtro.</div>:<div className="finance-task-list">{filteredTasks.map(t=>{const steps=t.subtarefas||[];const evalCount=steps.filter(financeStepEvaluated).length;const risks=steps.map(s=>financeLevelScore[s.risco]).filter(v=>v!==undefined);const maxRisk=risks.length?['baixo','medio','alto'][Math.max(...risks)]:'';const decisions=steps.filter(s=>s.delegar).length;const del=steps.filter(s=>s.delegar==='sim').length;const ps=popState(t);const open=openTasks.has(t.id);return <article className={`card finance-task-card ${open?'open':''}`} key={t.id} ref={el=>taskRefs.current[t.id]=el}>
-        <button className="finance-task-summary" onClick={()=>toggleTask(t.id)}><span className="finance-code">{t.codigo}</span><span className="finance-task-main"><small>{t.recorrencia||'Sem recorrência'}</small><b>{t.tarefa||'(sem título)'}</b><em>{steps.length}{t.expected_steps&&t.expected_steps>steps.length?` de ${t.expected_steps}`:''} etapa(s){t.atualizado_em?` · atualizada em ${financeDateBR(t.atualizado_em)}`:''}</em></span><span className="finance-task-tags"><i className={steps.length&&evalCount===steps.length?'ok':'neutral'}>{evalCount} de {steps.length} etapas avaliadas</i>{maxRisk&&<i className={financeLevelClass(maxRisk)}>Maior risco: {financeLevelLabel(maxRisk)}</i>}<i className={del>0?'ok':decisions===steps.length&&steps.length?'danger':'neutral'}>{!decisions?'Delegação a definir':`${del} de ${steps.length} etapas delegadas`}</i><i className={ps.tone}>{ps.label}</i></span><span className="finance-chevron">⌄</span></button>
-        {open&&<div className="finance-task-content"><div className="finance-task-content-head"><div><h3>Etapas · risco, complexidade, delegação e vídeo</h3><p>{steps.length?'Avalie cada etapa individualmente.':'Nenhuma etapa descrita ainda.'}</p></div>{canWrite&&<button className="btn btn-light" disabled={busy===`dup:${t.id}`} onClick={()=>duplicateTask(t)}>{busy===`dup:${t.id}`?'Duplicando…':'Duplicar'}</button>}</div>
-          <div className="finance-step-list">{steps.map((s,i)=><div className="finance-step" id={`finance-step-${s.id}`} key={s.id}><div className="finance-step-number">{i+1}</div><div className="finance-step-body"><b>{s.texto}</b>{canWrite?<><div className="finance-step-controls"><select className={financeLevelClass(s.risco)} value={s.risco||''} onChange={e=>updateStep(t,i,{risco:e.target.value})}>{FINANCE_RISK_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select><select className={financeLevelClass(s.complexidade)} value={s.complexidade||''} onChange={e=>updateStep(t,i,{complexidade:e.target.value})}>{FINANCE_COMPLEXITY_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select><select className={s.delegar==='sim'?'ok':'neutral'} value={s.delegar||''} onChange={e=>{const v=e.target.value;updateStep(t,i,{delegar:v});if(v==='sim'&&!s.responsavel)setTimeout(()=>responsibleInputRefs.current[s.id]?.focus(),30)}}>{FINANCE_DELEGATION_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>{s.delegar==='sim'&&<input ref={el=>responsibleInputRefs.current[s.id]=el} list="finance-responsibles" placeholder="Cargo ou nome da colaboradora" defaultValue={s.responsavel||''} onKeyDown={e=>{if(e.key==='Enter'){e.currentTarget.blur()}}} onBlur={e=>{if(e.target.value!==s.responsavel)updateStep(t,i,{responsavel:e.target.value.trim()})}}/>}</div></>:<p>Risco {financeLevelLabel(s.risco)} · complexidade {financeLevelLabel(s.complexidade)} · {s.delegar==='sim'?`delegada para ${s.responsavel||'responsável a definir'}`:s.delegar==='nao'?'mantém com o gestor':'delegação a definir'}</p>}
-            <div className="finance-step-assets"><div><span>Vídeo</span>{canUpload?<label className="btn btn-light mini">{busy===`video:${s.id}`?'Enviando…':taskVideos(t).some(v=>v.etapa_id===s.id)?'Enviar outro vídeo':'Enviar vídeo desta etapa'}<input type="file" accept="video/mp4,video/webm,.mov,.m4v,.qt" hidden disabled={busy===`video:${s.id}`} onChange={e=>uploadVideo(t,s,e.target.files?.[0])}/></label>:<small>{taskVideos(t).some(v=>v.etapa_id===s.id)?'Vídeo disponível':'Sem vídeo'}</small>}<button className="btn btn-light mini" onClick={()=>openPop(t,true)}>Enviar pelo Google Drive</button></div><div><span>Materiais</span>{materials.filter(m=>m.tarefa_id===t.id&&m.etapa_id===s.id).map(m=><button className="material-pill" key={m.id} onClick={()=>openMaterial(m)}>{m.tipo==='pop'?'POP':'Cartão'}</button>)}{canUpload&&<button className="btn btn-light mini" onClick={()=>setMaterialPicker({task:t,step:s})}>Importar</button>}</div></div>
-          </div></div>)}</div>
-          <div className="finance-task-actions"><button className="btn btn-primary" onClick={()=>openPop(t)}>Abrir POP</button>{canWrite&&<button className="btn btn-light" onClick={()=>editTask(t)}>Editar tarefa e etapas</button>}{canWrite&&(inlineDelete===t.id?<span className="inline-confirm">Excluir esta tarefa? <button className="btn btn-danger-soft" onClick={()=>deleteTask(t)}>Excluir</button><button className="btn btn-light" onClick={()=>setInlineDelete('')}>Cancelar</button></span>:<button className="btn btn-danger-soft" onClick={()=>setInlineDelete(t.id)}>Excluir</button>)}</div>
-        </div>}</article>})}</div>}
-      <datalist id="finance-responsibles">{[...new Set(tasks.flatMap(t=>(t.subtarefas||[]).map(s=>s.responsavel).filter(Boolean)))].map(x=><option key={x} value={x}/>)}</datalist>
-    </div>}
-
-    {tab==='mapa'&&<div className="finance-task-tab-body"><div className="delegation-layout"><div className="delegation-map"><div className="delegation-axis blank"/><div className="delegation-axis">Complexidade baixa</div><div className="delegation-axis">Complexidade média</div><div className="delegation-axis">Complexidade alta</div>{mapCells().flatMap((row,ri)=>[<div key={`r-${ri}`} className="delegation-axis row">Risco {['alto','médio','baixo'][ri]}</div>,...row.map(cell=>{const score=financeLevelScore[cell.r]+financeLevelScore[cell.c];const zone=score<=1?['Delegar agora','ok']:score===2?['Delegar com treino','attention']:['Manter com o gestor','danger'];return <div className={`delegation-cell ${zone[1]}`} key={`${cell.r}-${cell.c}`}><b>{zone[0]}{cell.steps.length?` · ${cell.steps.length}`:''}</b><div>{cell.steps.map(x=><button key={`${x.task.id}-${x.step.id}`} className={x.step.delegar==='sim'?'delegated':''} title={`${x.task.codigo} · Etapa ${x.index+1} · ${x.step.texto}${x.step.delegar==='sim'&&x.step.responsavel?` → ${x.step.responsavel}`:''}`} onClick={()=>scrollTask(x.task.id)}>{x.task.codigo}·{x.index+1} {x.step.texto.length>48?`${x.step.texto.slice(0,48)}…`:x.step.texto}</button>)}</div></div>})])}</div><aside className="card delegation-side"><h3>Etapas ainda sem avaliação</h3><p>Cada etapa entra no mapa quando recebe risco e complexidade. Etapas já delegadas aparecem com faixa verde.</p>{tasks.filter(t=>(t.subtarefas||[]).some(s=>!s.risco||!s.complexidade)).map(t=><button key={t.id} onClick={()=>scrollTask(t.id)}>{t.codigo} {t.tarefa} · {(t.subtarefas||[]).filter(s=>!s.risco||!s.complexidade).length} etapa(s)</button>)}{!tasks.some(t=>(t.subtarefas||[]).some(s=>!s.risco||!s.complexidade))&&<div className="empty">Todas as etapas já foram avaliadas.</div>}<div className="delegation-legend"><span className="ok">Delegar agora, com POP e conferência no início.</span><span className="attention">Delegar com treino e revisão periódica.</span><span className="danger">Manter com o gestor por enquanto.</span></div></aside></div></div>}
-
-    {tab==='responsavel'&&<div className="finance-task-tab-body"><div className="card responsible-note">Etapas agrupadas por quem faz. É a lista para entregar a cada colaboradora quando a delegação começar.</div><div className="responsible-groups">{responsibleGroups.map(g=><section className="card" key={g.name}><div className="responsible-head"><h3>{g.name}</h3><span>{g.items.length} etapa(s)</span></div>{g.items.map(x=><div className="responsible-item" key={`${x.task.id}-${x.step.id}`}><button onClick={()=>scrollTask(x.task.id)}>{x.task.codigo} · {x.index+1}</button><div><b>{x.step.texto}</b><small>{x.task.tarefa} · {x.task.recorrencia||'Sem recorrência'}</small></div></div>)}</section>)}<section className="card subtle"><div className="responsible-head"><h3>Ainda com o gestor</h3><span>{managerCount} etapas</span></div><p>{undecided?`${undecided} etapas ainda sem decisão de delegação. Defina na aba Tarefas.`:'Todas as etapas já têm decisão de delegação.'}</p></section></div></div>}
-
-    {tab==='pops'&&<div className="finance-task-tab-body"><div className="card pops-note">Dados de pacientes que aparecem nos vídeos são borrados nas telas do POP e nunca entram no texto. Cada tarefa tem um POP. Os que ainda não têm vídeo são rascunhos montados a partir das etapas; o vídeo é o que transforma o rascunho em procedimento validado.</div><div className="pops-grid">{tasks.map(t=>{const p=taskPop(t);const ps=popState(t);return <article className="card pop-card" key={t.id}><div><span className="finance-code">{t.codigo}</span><i className={ps.tone}>{ps.label}</i></div><h3>{t.tarefa}</h3><p>{p?.objetivo||'Ainda sem POP. Envie um vídeo para gerar o procedimento.'}</p><div><button className="btn btn-primary" onClick={()=>openPop(t)}>Abrir POP</button>{canUpload&&<button className="btn btn-light" onClick={()=>openPop(t,true)}>Enviar vídeo</button>}</div></article>})}{!tasks.length&&<div className="card empty">Os POPs aparecem aqui para cada tarefa cadastrada.</div>}</div></div>}
-
-    {editor&&<Modal open={true} onClose={()=>setEditor(null)} title={editor.mode==='new'?'Nova tarefa':'Editar tarefa'} subtitle="Gerente de Administração Financeira" onSave={saveTask} saveText={editor.mode==='new'?'Criar tarefa':'Salvar alterações'}><div className="form-grid"><Field label={editor.mode==='edit'&&String(editor.tarefa).startsWith('Cópia de ')?'Tarefa (cópia: troque o nome e ajuste as etapas)':'Tarefa'} full><input autoFocus value={editor.tarefa} onChange={e=>setEditor({...editor,tarefa:e.target.value})} placeholder="Ex.: Fechamento Unimed"/></Field><Field label="Recorrência" full><input list="finance-recurrence" value={editor.recorrencia} onChange={e=>setEditor({...editor,recorrencia:e.target.value})} placeholder="Ex.: 1x mês até dia 10"/><datalist id="finance-recurrence">{FINANCE_RECURRENCE.map(x=><option key={x} value={x}/>)}</datalist></Field><div className="full task-step-editor"><label>Etapas (na ordem em que são feitas). A delegação de cada etapa é definida depois de salvar.</label>{editor.subtarefas.map((s,i)=><div key={s.id} className="task-step-edit-row"><span>{i+1}</span><textarea rows="2" value={s.texto} onChange={e=>setEditor({...editor,subtarefas:editor.subtarefas.map((x,j)=>j===i?{...x,texto:e.target.value}:x)})}/><div><button type="button" disabled={i===0} onClick={()=>{const a=[...editor.subtarefas];[a[i-1],a[i]]=[a[i],a[i-1]];setEditor({...editor,subtarefas:a})}}>↑</button><button type="button" disabled={i===editor.subtarefas.length-1} onClick={()=>{const a=[...editor.subtarefas];[a[i+1],a[i]]=[a[i],a[i+1]];setEditor({...editor,subtarefas:a})}}>↓</button><button type="button" onClick={()=>{let a=editor.subtarefas.filter((_,j)=>j!==i);if(!a.length)a=[{id:financeUid(),texto:'',delegar:'',responsavel:'',risco:'',complexidade:''}];setEditor({...editor,subtarefas:a})}}>×</button></div></div>)}<button type="button" className="btn btn-light" onClick={()=>setEditor({...editor,subtarefas:[...editor.subtarefas,{id:financeUid(),texto:'',delegar:'',responsavel:'',risco:'',complexidade:''}]})}>+ Adicionar etapa</button></div></div></Modal>}
-
-    {popTask&&<FinancePopModal task={popTask} pop={taskPop(popTask)} videos={taskVideos(popTask)} submissions={taskSubmissions(popTask)} materials={materials.filter(m=>m.tarefa_id===popTask.id)} canUpload={canUpload} canAdmin={canAdmin} onClose={()=>{setPopTask(null);setPopScrollUpload(false)}} scrollUpload={popScrollUpload} onUploadVideo={uploadVideo} onRegisterDrive={registerDrive} onOpenMaterial={openMaterial}/>} 
-    {materialPicker&&<div className="modal" onMouseDown={e=>{if(e.target===e.currentTarget)setMaterialPicker(null)}}><div className="card modal-card small-material-modal"><div className="modal-head"><div><h2>Importar material</h2><p>{materialPicker.task.codigo} · Etapa {(materialPicker.task.subtarefas||[]).findIndex(s=>s.id===materialPicker.step.id)+1}</p></div><button className="icon-close" onClick={()=>setMaterialPicker(null)}>×</button></div><p>O que você vai importar (sempre em PDF)?</p><div className="material-type-buttons">{['pop','cartao'].map(type=><label className="btn btn-primary" key={type}>{busy===`material:${materialPicker.step.id}:${type}`?'Importando…':type==='pop'?'POP':'Cartão de execução'}<input type="file" hidden accept="application/pdf,.pdf" disabled={busy===`material:${materialPicker.step.id}:${type}`} onChange={e=>importMaterial(materialPicker.task,materialPicker.step,type,e.target.files?.[0])}/></label>)}</div></div></div>}
-    {viewer&&<div className="modal material-viewer" onMouseDown={e=>{if(e.target===e.currentTarget)setViewer(null)}}><div className="card material-viewer-card"><div className="modal-head"><div><h2>{viewer.codigo} · Etapa {viewer.etapa_num} · {viewer.tipo==='pop'?'POP':'Cartão de execução'}</h2><p>{viewer.etapa_texto}</p></div><button className="icon-close" onClick={()=>setViewer(null)}>×</button></div><iframe title="Documento" src={viewer.signedUrl}/><div className="form-actions"><a className="btn btn-primary" href={viewer.signedUrl} download={viewer.nome_arquivo}>Imprimir / baixar PDF</a><button className="btn btn-light" onClick={()=>setViewer(null)}>Fechar</button></div></div></div>}
-  </section>;
-}
-
-function FinancePopModal({task,pop,videos,submissions,materials,canUpload,canAdmin,onClose,scrollUpload,onUploadVideo,onRegisterDrive,onOpenMaterial}){
-  const uploadRef=useRef(null);const [driveLink,setDriveLink]=useState('');const [obs,setObs]=useState('');const [stepId,setStepId]=useState('');
-  useEffect(()=>{if(scrollUpload)setTimeout(()=>uploadRef.current?.scrollIntoView({behavior:'smooth',block:'center'}),100)},[scrollUpload]);
-  const p=pop||((task.codigo==='FIN-01')?{status:'rascunho',versao:1,atualizado_em:task.atualizado_em,fonte:'Etapa 1 cadastrada',...financeStep1Pop}:null);const ps=(()=>{if(videos.some(v=>v.status!=='processado')||submissions.some(x=>x.status==='aguardando'))return{tone:'attention',label:'Vídeo recebido · atualizando'};if(p?.status==='validado')return{tone:'ok',label:`POP validado v${p.versao||1}`};if(p)return{tone:'neutral',label:`Rascunho v${p.versao||1}`};return{tone:'neutral',label:'Sem POP'}})();const chosenStep=(task.subtarefas||[]).find(s=>s.id===stepId)||null;
-  return <div className="modal pop-modal" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><div className="card modal-card pop-modal-card"><div className="modal-head"><div><div className="eyebrow">POP · {task.codigo}</div><h2>{task.tarefa}</h2></div><button className="icon-close" onClick={onClose}>×</button></div><div className="pop-status-line"><i className={ps.tone}>{ps.label}</i>{p?<span>Versão {p.versao||1} · {financeDateBR(p.atualizado_em||task.atualizado_em)} · {p.fonte||'cadastro interno'}</span>:<span>Este POP ainda não foi escrito.</span>}</div>{(videos.some(v=>v.status!=='processado')||submissions.some(x=>x.status==='aguardando'))&&<div className="finance-task-notice">Há vídeo novo aguardando. O POP é reescrito na próxima rodada automática (de hora em hora, das 7h52 às 17h52 nos dias úteis) e esta tela se atualiza sozinha.</div>}
-    {p?<><section className="pop-section"><h3>Identificação</h3><div className="pop-ident-grid"><div><span>Objetivo</span><p>{p.objetivo}</p></div><div><span>Quando fazer</span><p>{p.quando||task.recorrencia}</p></div><div><span>Responsável</span><p>{p.responsavel||'A definir'}</p></div><div><span>Sistemas e materiais</span><p>{(p.sistemas||[]).join(' · ')||'A definir'}</p></div></div></section><section className="pop-section"><h3>Passo a passo</h3><div className="pop-steps">{(p.passos||[]).map((x,i)=><div key={i}><span>{i+1}</span><div><b>{x.titulo}</b><p>{x.detalhe}</p>{x.alerta&&<strong>Atenção: {x.alerta}</strong>}<small>{x.responsavel}</small></div></div>)}</div></section><section className="pop-section"><h3>Pontos de atenção</h3><ul>{(p.atencao||[]).map((x,i)=><li key={i}>{x}</li>)}</ul><h3>Em caso de dúvida</h3><p>{p.duvidas||'—'}</p></section></>:<section className="pop-section"><h3>Etapas cadastradas</h3>{(task.subtarefas||[]).length?<ol>{task.subtarefas.map(s=><li key={s.id}>{s.texto}</li>)}</ol>:<p>Nenhuma etapa descrita.</p>}</section>}
-    {(task.subtarefas||[]).some(s=>s.delegar)&&<section className="pop-section"><h3>Quem faz cada etapa</h3>{(task.subtarefas||[]).map((s,i)=><div className="pop-owner-row" key={s.id}><b>Etapa {i+1}</b><span>{s.delegar==='sim'?(s.responsavel||'Delegada, responsável a definir'):s.delegar==='nao'?'Gestor':'A definir'}</span></div>)}</section>}
-    {canAdmin&&<section className="pop-section"><h3>Vídeos originais</h3><p>Visíveis só para quem administra o portal, porque podem mostrar dados de pacientes. A equipe vê o POP com as telas já borradas.</p>{videos.map(v=><div className="video-row" key={v.id}><div><b>{v.etapa_num?`Etapa ${v.etapa_num} · ${v.etapa_texto}`:'Tarefa inteira'}</b><small>{v.nome_arquivo} · {v.tamanho_mb||0} MB · {financeDateBR(v.enviado_em)}</small></div><i className={v.status==='processado'?'ok':'attention'}>{v.status==='processado'?'No POP':'Aguardando POP'}</i></div>)}</section>}
-    <section className="pop-section"><h3>POPs e cartões importados por etapa</h3>{materials.length?<div className="material-list">{materials.map(m=><div key={m.id}><i className="ok">{m.tipo==='pop'?'POP':'Cartão de execução'}</i><span>{m.nome_arquivo} · {financeDateBR(m.enviado_em)}</span><button className="btn btn-light mini" onClick={()=>onOpenMaterial(m)}>{m.tipo==='pop'?'Ver POP':'Ver cartão'}</button></div>)}</div>:<p>Nenhum material importado.</p>}</section>
-    {p?.historico?.length?<section className="pop-section"><h3>Histórico de versões</h3>{p.historico.map((h,i)=><div key={i}>v{h.versao} · {financeDateBR(h.data)} · {h.nota}</div>)}</section>:null}
-    <section className="pop-section pop-upload" ref={uploadRef}><h3>Enviar vídeo</h3><p>Dica: na aba Tarefas, cada etapa tem o próprio botão de envio. Sempre que possível, grave com um paciente de teste. Dados de pacientes que aparecerem são borrados nas imagens do POP e não entram no texto.</p>{canUpload?<><Field label="Este vídeo mostra"><select value={stepId} onChange={e=>setStepId(e.target.value)}><option value="">Tarefa inteira</option>{(task.subtarefas||[]).map((s,i)=><option value={s.id} key={s.id}>Etapa {i+1} · {s.texto.slice(0,70)}</option>)}</select></Field><label className="video-drop">Escolher vídeo — MP4 ou WebM até 20 MB<input type="file" hidden accept="video/mp4,video/webm,.mov,.m4v,.qt" onChange={e=>onUploadVideo(task,chosenStep,e.target.files?.[0])}/></label><div className="or">ou</div><Field label="Link do vídeo no Google Drive"><input value={driveLink} onChange={e=>setDriveLink(e.target.value)} placeholder="https://drive.google.com/..."/></Field><Field label="Observações para o POP"><textarea rows="3" value={obs} onChange={e=>setObs(e.target.value)} placeholder="Opcional: o que muda em relação ao que está escrito, exceções, prazos, quem confere."/></Field><button className="btn btn-primary" onClick={()=>{if(!driveLink)return alert('Escolha um vídeo ou cole o link do Google Drive.');onRegisterDrive(task,chosenStep,driveLink,obs);setDriveLink('');setObs('')}}>Registrar vídeo do Drive</button></>:<p>O envio de vídeos fica disponível para quem tem permissão de edição neste portal.</p>}</section>
-  </div></div>;
-}
 
 
 function App(){
@@ -1578,7 +437,7 @@ function App(){
     date:todayISO(),realization_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',exam_type_ids:[],eye:'',insurance_id:'',status:'Agendado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [sForm,setSForm] = useState({
-    date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',
+    date:todayISO(),scheduled_on:'',second_eye_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',
     insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',launcher:'',obs:'',...emptyFinanceForm()
   });
   const [pForm,setPForm] = useState({
@@ -1611,6 +470,10 @@ function App(){
   // surgery_types = somente cirurgias | procedures = somente procedimentos.
   // O SQL V17 desativa o item no catálogo errado sem apagar o histórico.
   const procedureOptions = useMemo(()=>procedures,[procedures]);
+  const selectedSurgeryName = surgeryTypes.find(x=>x.id===sForm.surgery_type_id)?.name||'';
+  const isCataractBothEyes = normalizeCatalogLabel(selectedSurgeryName).includes('catarata') &&
+    normalizeCatalogLabel(sForm.eye).includes('ambos');
+
 
   const insuranceNameById=id=>insurances.find(x=>x.id===id)?.name||'';
   const explicitOrigin=form=>form.coverage_choice==='__PARTICULAR__'?'Particular':(form.coverage_choice?(normalizeCatalogLabel(insuranceNameById(form.insurance_id)).includes('sus')?'SUS':'Convênio'):'');
@@ -1618,31 +481,12 @@ function App(){
     if(!examForm.coverage_choice||!examForm.eye) return null;
     return automaticPriceTotal({kind:'exam',names:(examForm.exam_type_ids||[]).map(id=>examTypes.find(x=>x.id===id)?.name),origin:explicitOrigin(examForm),insuranceName:insuranceNameById(examForm.insurance_id),eye:examForm.eye});
   },[examForm.exam_type_ids,examForm.coverage_choice,examForm.insurance_id,examForm.eye,examTypes,insurances]);
-  const surgeryAutoPrice=useMemo(()=>{
-    if(!sForm.coverage_choice||!sForm.eye) return null;
-    return automaticPriceTotal({kind:'surgery',names:surgeryTypes.find(x=>x.id===sForm.surgery_type_id)?.name||'',origin:explicitOrigin(sForm),insuranceName:insuranceNameById(sForm.insurance_id),eye:sForm.eye,detail:sForm.lio_description});
-  },[sForm.surgery_type_id,sForm.coverage_choice,sForm.insurance_id,sForm.eye,sForm.lio_description,surgeryTypes,insurances]);
-  const procedureAutoPrice=useMemo(()=>{
-    if(!pForm.coverage_choice||!pForm.eye) return null;
-    return automaticPriceTotal({kind:'procedure',names:(pForm.procedure_ids||[]).map(id=>procedureOptions.find(x=>x.id===id)?.name),origin:explicitOrigin(pForm),insuranceName:insuranceNameById(pForm.insurance_id),eye:pForm.eye});
-  },[pForm.procedure_ids,pForm.coverage_choice,pForm.insurance_id,pForm.eye,procedureOptions,insurances]);
 
   useEffect(()=>{
     if(examForm.price_manual) return;
     const next=examAutoPrice?String(examAutoPrice.amount):'';
     if(String(examForm.total_amount||'')!==next) setExamForm(f=>({...f,total_amount:next,price_preset_key:examAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
   },[examAutoPrice,examForm.price_manual]);
-  useEffect(()=>{
-    if(sForm.price_manual) return;
-    const extras=(sForm.procedure_ids||[]).reduce((sum,id)=>{const cfg=sForm.procedure_finance?.[id];return sum+(cfg?.included===false?numericValue(cfg.amount):0)},0);
-    const next=surgeryAutoPrice?String(surgeryAutoPrice.amount+extras):'';
-    if(String(sForm.total_amount||'')!==next) setSForm(f=>({...f,total_amount:next,price_preset_key:surgeryAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
-  },[surgeryAutoPrice,sForm.price_manual,sForm.procedure_ids,sForm.procedure_finance]);
-  useEffect(()=>{
-    if(pForm.price_manual) return;
-    const next=procedureAutoPrice?String(procedureAutoPrice.amount):'';
-    if(String(pForm.total_amount||'')!==next) setPForm(f=>({...f,total_amount:next,price_preset_key:procedureAutoPrice?.keys?.join(',')||'',payment_origin:explicitOrigin(f)}));
-  },[procedureAutoPrice,pForm.price_manual]);
 
   const currentLaunchName = profile?.full_name?.trim() || session?.user?.email || (profile?.role==='admin'?'ADM':'Usuário');
   const launcherOptionsAll = ['Juliana','Elizângela','Luiza','ADM'];
@@ -1677,7 +521,7 @@ function App(){
         insurances(id,name)
       `).order('exam_date',{ascending:false}),
       supabase.from('surgeries').select(`
-        id,launch_group_id,surgery_date,scheduled_on,eye,lio_description,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,surgery_type_id,record_kind,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
+        id,launch_group_id,surgery_date,scheduled_on,second_eye_date,eye,lio_description,status,arrival_time,surgery_time,payment_status,observation,launched_by,launched_by_name,surgery_type_id,record_kind,payment_origin,total_amount,discount_amount,received_amount,payment_method,installments,financial_status,expected_receipt_date,received_date,billed_amount,billing_competence,billing_date,financial_notes,price_preset_key,payment_breakdown,invoice_number,invoice_issued_date,invoice_file_path,financial_documents,repasses,
         patients(id,full_name,whatsapp,birth_date),
         doctors:doctors!surgeries_doctor_id_fkey(id,name),
         indicated_by:doctors!surgeries_indicated_by_doctor_id_fkey(id,name),
@@ -1862,38 +706,6 @@ function App(){
 
   // V28: múltiplos anexos permanecem apenas no fluxo da cirurgia.
   // Exames e procedimentos mantêm exatamente o comportamento da V25.
-  const uploadFinancialDocument = async (file,sourceType,groupId)=>{
-    if(!file) return null;
-    const safeName=String(file.name||'documento').replace(/[^a-zA-Z0-9._-]+/g,'-');
-    const unique=(crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    const path=`${sourceType}/${groupId}/${unique}-${safeName}`;
-    const {error}=await supabase.storage.from('financial-documents').upload(path,file,{upsert:false,contentType:file.type||undefined});
-    if(error) throw error;
-    return {
-      id:unique,
-      path,
-      name:file.name||safeName,
-      type:file.type||'',
-      size:Number(file.size||0),
-      uploaded_at:new Date().toISOString()
-    };
-  };
-
-  const syncFinancialDocuments = async (form,sourceType,groupId)=>{
-    const existing=Array.isArray(form.financial_documents)?form.financial_documents:[];
-    const pending=Array.isArray(form.pending_documents)?form.pending_documents:[];
-    const removed=[...new Set(form.removed_document_paths||[])];
-    if(removed.length){
-      const {error:removeError}=await supabase.storage.from('financial-documents').remove(removed);
-      if(removeError) console.error('Falha ao remover documentos financeiros',removeError);
-    }
-    const uploaded=[];
-    for(const file of pending){
-      const doc=await uploadFinancialDocument(file,sourceType,groupId);
-      if(doc) uploaded.push(doc);
-    }
-    return [...existing.filter(doc=>doc?.path&&!removed.includes(doc.path)),...uploaded];
-  };
 
   const openInvoiceFile = async (path,name='Documento')=>{
     if(!path) return;
@@ -1927,6 +739,7 @@ function App(){
     if(!examForm.exam_type_ids?.length) missing.push('exam_type_ids');
     if(!examForm.coverage_choice) missing.push('coverage_choice');
     if(!examForm.eye) missing.push('eye');
+    if(String(examForm.total_amount??'').trim()==='') missing.push('total_amount');
     if(!examForm.payment_confirmed) missing.push('payment_confirmed');
     if(!examLaunchName) missing.push('launcher');
     if(missing.length){setValidationErrors('exam',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
@@ -2005,9 +818,15 @@ function App(){
     if(!sForm.surgery_type_id) missing.push('surgery_type_id');
     if(!sForm.coverage_choice) missing.push('coverage_choice');
     if(!sForm.eye) missing.push('eye');
+    if(isCataractBothEyes&&!sForm.second_eye_date) missing.push('second_eye_date');
+    if(String(sForm.total_amount??'').trim()==='') missing.push('total_amount');
     if(!sForm.payment_confirmed) missing.push('payment_confirmed');
     if(!surgeryLaunchName) missing.push('launcher');
     if(missing.length){setValidationErrors('surgery',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
+    if(isCataractBothEyes&&sForm.scheduled_on&&sForm.second_eye_date&&sForm.second_eye_date<=sForm.scheduled_on){
+      setValidationErrors('surgery',['second_eye_date'],'A próxima realização do segundo olho precisa ser posterior à primeira data de realização.');
+      return;
+    }
     clearValidationErrors('surgery');
 
     try{
@@ -2019,6 +838,7 @@ function App(){
         launch_group_id,
         surgery_date:sForm.date,
         scheduled_on:sForm.scheduled_on||null,
+        second_eye_date:isCataractBothEyes?(sForm.second_eye_date||null):null,
         patient_id,
         doctor_id:sForm.doctor_id,
         indicated_by_doctor_id:sForm.indicated_by_doctor_id||null,
@@ -2070,7 +890,7 @@ function App(){
 
       setSurgeryModal(false);
       setSForm({
-        date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',
+        date:todayISO(),scheduled_on:'',second_eye_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',
         eye:'',insurance_id:'',status:'Solicitação',
         arrival:'',time:'',payment:'Não informado',launcher:defaultLaunchName,obs:'',...emptyFinanceForm()
       });
@@ -2108,6 +928,7 @@ function App(){
     setSForm({
       date:r.date,
       scheduled_on:r.scheduled_on||'',
+      second_eye_date:r.second_eye_date||'',
       patient:r.patient,
       patient_birth_date:r.patient_birth_date||'',
       whatsapp:r.whatsapp || '',
@@ -2173,8 +994,8 @@ function App(){
   const updateExam = async ()=>{
     const original = records.find(r=>r.id===editingExamId);
     if(!original) return;
-    if(!examForm.date||!examForm.realization_date||!examForm.patient.trim()||!examForm.indicated_by_doctor_id||!examForm.doctor_id||!examForm.exam_type_ids?.length||!examForm.coverage_choice||!examForm.eye||!examForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, exame(s), convênio/Particular, olho e pagamento.');
+    if(!examForm.date||!examForm.realization_date||!examForm.patient.trim()||!examForm.indicated_by_doctor_id||!examForm.doctor_id||!examForm.exam_type_ids?.length||!examForm.coverage_choice||!examForm.eye||String(examForm.total_amount??'').trim()===''||!examForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, exame(s), convênio/Particular, olho, valor total e pagamento.');
 
     try{
       await updatePatient(original.patient_id, examForm.patient, examForm.whatsapp, examForm.patient_birth_date);
@@ -2219,8 +1040,24 @@ function App(){
   const updateSurgery = async ()=>{
     const original = surgeries.find(r=>r.id===editingSurgeryId);
     if(!original) return;
-    if(!sForm.date||!sForm.scheduled_on||!sForm.patient.trim()||!sForm.indicated_by_doctor_id||!sForm.doctor_id||!sForm.surgery_type_id||!sForm.coverage_choice||!sForm.eye||!sForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, cirurgião, cirurgia, convênio/Particular, olho e pagamento.');
+    const missing=[];
+    if(!sForm.date) missing.push('date');
+    if(!sForm.scheduled_on) missing.push('scheduled_on');
+    if(!sForm.patient.trim()) missing.push('patient');
+    if(!sForm.indicated_by_doctor_id) missing.push('indicated_by_doctor_id');
+    if(!sForm.doctor_id) missing.push('doctor_id');
+    if(!sForm.surgery_type_id) missing.push('surgery_type_id');
+    if(!sForm.coverage_choice) missing.push('coverage_choice');
+    if(!sForm.eye) missing.push('eye');
+    if(isCataractBothEyes&&!sForm.second_eye_date) missing.push('second_eye_date');
+    if(String(sForm.total_amount??'').trim()==='') missing.push('total_amount');
+    if(!sForm.payment_confirmed) missing.push('payment_confirmed');
+    if(missing.length){setValidationErrors('surgery',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
+    if(isCataractBothEyes&&sForm.scheduled_on&&sForm.second_eye_date&&sForm.second_eye_date<=sForm.scheduled_on){
+      setValidationErrors('surgery',['second_eye_date'],'A próxima realização do segundo olho precisa ser posterior à primeira data de realização.');
+      return;
+    }
+    clearValidationErrors('surgery');
 
     try{
       await updatePatient(original.patient_id, sForm.patient, sForm.whatsapp, sForm.patient_birth_date);
@@ -2238,6 +1075,7 @@ function App(){
         launch_group_id:original.group_id,
         surgery_date:sForm.date,
         scheduled_on:sForm.scheduled_on||null,
+        second_eye_date:isCataractBothEyes?(sForm.second_eye_date||null):null,
         patient_id:original.patient_id,
         doctor_id:sForm.doctor_id,
         indicated_by_doctor_id:sForm.indicated_by_doctor_id||null,
@@ -2288,7 +1126,7 @@ function App(){
 
       setSurgeryModal(false);
       setEditingSurgeryId(null);
-      setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
+      setSForm({date:todayISO(),scheduled_on:'',second_eye_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
       await loadAll();
     }catch(e){
       console.error(e);
@@ -2306,6 +1144,7 @@ function App(){
     if(!pForm.procedure_ids?.length) missing.push('procedure_ids');
     if(!pForm.coverage_choice) missing.push('coverage_choice');
     if(!pForm.eye) missing.push('eye');
+    if(String(pForm.total_amount??'').trim()==='') missing.push('total_amount');
     if(!pForm.payment_confirmed) missing.push('payment_confirmed');
     if(!procedureLaunchName) missing.push('launcher');
     if(missing.length){setValidationErrors('procedure',missing,'Alguns campos obrigatórios ainda precisam ser preenchidos.');return;}
@@ -2363,8 +1202,8 @@ function App(){
   const updateProcedure = async ()=>{
     const original=procedureLaunchRows.find(r=>(r.group_key||r.id)===editingProcedureId);
     if(!original) return;
-    if(!pForm.date||!pForm.realization_date||!pForm.patient.trim()||!pForm.indicated_by_doctor_id||!pForm.doctor_id||!pForm.procedure_ids?.length||!pForm.coverage_choice||!pForm.eye||!pForm.payment_confirmed)
-      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, procedimento(s), convênio/Particular, olho e pagamento.');
+    if(!pForm.date||!pForm.realization_date||!pForm.patient.trim()||!pForm.indicated_by_doctor_id||!pForm.doctor_id||!pForm.procedure_ids?.length||!pForm.coverage_choice||!pForm.eye||String(pForm.total_amount??'').trim()===''||!pForm.payment_confirmed)
+      return alert('Preencha os campos obrigatórios: data do agendamento, data da realização, paciente, médico que indicou, médico que realizou/fará, procedimento(s), convênio/Particular, olho, valor total e pagamento.');
     try{
       await updatePatient(original.patient_id,pForm.patient,pForm.whatsapp,pForm.patient_birth_date);
 
@@ -2438,7 +1277,7 @@ function App(){
   const closeSurgeryModal = ()=>{
     setSurgeryModal(false);
     setEditingSurgeryId(null);
-    setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
+    setSForm({date:todayISO(),scheduled_on:'',second_eye_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});
   };
 
   const closeProcedureModal = ()=>{
@@ -2548,7 +1387,7 @@ function App(){
     const q=sSearch.trim().toLowerCase();
     return surgeries.filter(r=>
       (!sMonth||r.date.startsWith(sMonth)) &&
-      (!sDate||r.date===sDate||r.scheduled_on===sDate) &&
+      (!sDate||r.date===sDate||r.scheduled_on===sDate||r.second_eye_date===sDate) &&
       (!sDoctor||r.doctor_id===sDoctor) &&
       (!sSurgeryType||r.surgery_type_id===sSurgeryType) &&
       (!sProcedure||r.procedure_ids?.includes(sProcedure)) &&
@@ -3090,7 +1929,35 @@ function App(){
   const dailyReportRows = useMemo(()=>{
     const q=dailySearch.trim().toLowerCase();
     const examRows=records.map(r=>({...r,report_type:'Exame',report_source:'exam',service_name:r.exam}));
-    const surgeryRows=surgeries.map(r=>({...r,report_type:'Cirurgia',report_source:'surgery',service_name:r.surgery_type}));
+    const surgeryRows=surgeries.flatMap(r=>{
+      const base={
+        ...r,
+        report_type:'Cirurgia',
+        report_source:'surgery',
+        service_name:r.surgery_type,
+        report_realization_date:r.scheduled_on||r.date,
+        report_eye_stage:r.second_eye_date?'1º olho':'',
+        report_other_eye_label:r.second_eye_date?'2º olho':'',
+        report_other_eye_date:r.second_eye_date||''
+      };
+      // Catarata em Ambos (AO) continua sendo UM lançamento no banco.
+      // No Relatório Diário ela ganha uma segunda ocorrência visual na data do 2º olho.
+      if(!r.second_eye_date) return [base];
+      return [
+        base,
+        {
+          ...r,
+          report_type:'Cirurgia',
+          report_source:'surgery',
+          service_name:r.surgery_type,
+          report_realization_date:r.second_eye_date,
+          report_eye_stage:'2º olho',
+          report_other_eye_label:'1º olho',
+          report_other_eye_date:r.scheduled_on||r.date,
+          report_occurrence:'second-eye'
+        }
+      ];
+    });
     const procedureRows=procedureLaunchRows.map(r=>({...r,report_type:'Procedimento',report_source:'procedure',service_name:r.procedure}));
     return [...examRows,...surgeryRows,...procedureRows]
       .filter(r=>!dailySources.length||dailySources.includes(r.report_source))
@@ -3099,12 +1966,15 @@ function App(){
       .filter(r=>{
         const status=String(r.status||'').toLowerCase();
         const realized=status.includes('realiz');
+        const scheduled=status.includes('agendad');
         const canceled=status.includes('cancel');
-        const realizationDate=r.report_source==='surgery'?(r.scheduled_on||r.date):(r.realization_date||r.date);
+        const realizationDate=r.report_source==='surgery'
+          ? (r.report_realization_date||r.scheduled_on||r.date)
+          : (r.realization_date||r.date);
         const stage=realized?'realizado':canceled?'cancelado':'lancado';
         if(dailyStages.length&&!dailyStages.includes(stage)) return false;
         if(!dailyDate) return true;
-        return stage==='realizado'?realizationDate===dailyDate:r.date===dailyDate;
+        return (stage==='realizado'||scheduled)?realizationDate===dailyDate:r.date===dailyDate;
       })
       .sort((a,b)=>String(a.patient||'').localeCompare(String(b.patient||''),'pt-BR'));
   },[records,surgeries,procedureLaunchRows,dailyDate,dailySources,dailyStages,dailySearch,dailyBirthDate]);
@@ -3215,8 +2085,10 @@ function App(){
         y+=12;
         addLine('Paciente:',`${r.patient||'—'}${r.patient_birth_date?` • Nasc. ${brDate(r.patient_birth_date)}`:''}`);
         addLine('Agendamento:',brDate(r.date));
-        const realizationDate=r.report_source==='surgery'?r.scheduled_on:r.realization_date;
+        const realizationDate=r.report_source==='surgery'?(r.report_realization_date||r.scheduled_on):r.realization_date;
         if(realizationDate) addLine('Realização:',brDate(realizationDate));
+        if(r.report_source==='surgery'&&r.report_eye_stage) addLine('Etapa:',r.report_eye_stage);
+        if(r.report_source==='surgery'&&r.report_other_eye_date) addLine(`${r.report_other_eye_label}:`,brDate(r.report_other_eye_date));
         if(r.report_source==='surgery') addLine('LIO:',r.lio_description||'—');
         addLine('Convênio:',r.insurance||financeOrigin(r)||'Particular');
         addLine('Pagamentos:',payments);
@@ -3240,9 +2112,13 @@ function App(){
     try{
       const title=`Exames / Cirurgias / Procedimentos — ${brDate(dailyDate)} — ${weekdayLabel(dailyDate)}`;
       const rowsHtml=dailyReportRows.length ? dailyReportRows.map((r,index)=>{
-        const realizationDate=r.report_source==='surgery'?r.scheduled_on:r.realization_date;
+        const realizationDate=r.report_source==='surgery'?(r.report_realization_date||r.scheduled_on):r.realization_date;
         const realization=realizationDate
           ? `<p><b>DATA DA REALIZAÇÃO:</b> ${escapeWordHtml(brDate(realizationDate))}</p>`:'';
+        const eyeStage=r.report_source==='surgery'&&r.report_eye_stage
+          ? `<p><b>ETAPA:</b> ${escapeWordHtml(r.report_eye_stage)}</p>`:'';
+        const otherEye=r.report_source==='surgery'&&r.report_other_eye_date
+          ? `<p><b>${escapeWordHtml(r.report_other_eye_label)}:</b> ${escapeWordHtml(brDate(r.report_other_eye_date))}</p>`:'';
         const lio=r.report_source==='surgery'
           ? `<p><b>LIO:</b> ${escapeWordHtml(r.lio_description||'—')}</p>`:'';
         const docs=(r.financial_documents?.length||r.invoice_file_path)
@@ -3251,7 +2127,7 @@ function App(){
           <h2>${index+1}. ${escapeWordHtml(String(r.report_type||'').toUpperCase())}: ${escapeWordHtml(r.service_name||'—')}</h2>
           <p><b>STATUS:</b> ${escapeWordHtml(r.status||'—')}</p>
           <p><b>DATA DO AGENDAMENTO:</b> ${escapeWordHtml(brDate(r.date))}</p>
-          ${realization}${lio}
+          ${realization}${eyeStage}${otherEye}${lio}
           <p><b>CONVÊNIO:</b> ${escapeWordHtml(r.insurance||financeOrigin(r)||'Particular')}</p>
           <p><b>NOME DO PACIENTE:</b> <strong>${escapeWordHtml(r.patient||'—')}</strong>${r.patient_birth_date?` — Nasc. ${escapeWordHtml(brDate(r.patient_birth_date))}`:''}</p>
           <p><b>VALOR / PAGAMENTOS:</b> ${escapeWordHtml(paymentSummaryText(r))}</p>
@@ -5952,7 +4828,7 @@ function App(){
         <div className="topbar"><div><div className="eyebrow">CENTRO CIRÚRGICO</div><h1>Controle de cirurgias</h1><div className="subtitle">Programação, autorização, contato e observações.</div></div>
           <div className="top-actions">
             <button className="btn btn-light" onClick={()=>setPage('cadastros')}><Settings size={16}/> Cadastros</button>
-            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}><Plus size={16}/> Nova cirurgia</button>
+            <button className="btn btn-primary" onClick={()=>{setEditingSurgeryId(null);setSForm({date:todayISO(),scheduled_on:'',second_eye_date:'',patient:'',patient_birth_date:'',whatsapp:'',doctor_id:'',indicated_by_doctor_id:'',surgery_type_id:'',procedure_ids:[],procedure_finance:{},lio_description:'',eye:'',insurance_id:'',status:'Solicitação',arrival:'',time:'',payment:'Não informado',obs:'',...emptyFinanceForm()});setSurgeryModal(true)}}><Plus size={16}/> Nova cirurgia</button>
           </div>
         </div>
         <div className="kpis"><Kpi label="Cirurgias no período" value={filteredSurgeries.length}/><Kpi label="Agendadas" value={countRowsByStatus(filteredSurgeries,'Agendada')}/><Kpi label="Pendentes" value={countRowsByStatus(filteredSurgeries,'Pendente')}/><Kpi label="Realizadas" value={countRowsByStatus(filteredSurgeries,'Realizada')}/><Kpi label="Procedimentos vinculados" value={totalItems(filteredSurgeries,'procedure_ids')}/></div>
@@ -5976,7 +4852,7 @@ function App(){
           </div>
           <div className="table-wrap"><table><thead><tr><th>Agendado em</th><th>Realização</th><th>Paciente</th><th>Cirurgião</th><th>Indicado por</th><th>Cirurgia</th><th>Procedimentos</th><th>Olho</th><th>Convênio</th><th>Status</th><th>Financeiro</th><th>Observação</th><th>Lançado por</th><th>Ações</th></tr></thead>
           <tbody>{filteredSurgeries.length?filteredSurgeries.map(r=><tr key={r.id}>
-            <td>{brDate(r.date)}</td><td>{r.scheduled_on?brDate(r.scheduled_on):<span className="muted">—</span>}</td><td><PatientCell name={r.patient} phone={r.whatsapp} birthDate={r.patient_birth_date}/></td>
+            <td>{brDate(r.date)}</td><td>{r.scheduled_on?<div><b>{brDate(r.scheduled_on)}</b>{r.second_eye_date&&<small style={{display:'block',marginTop:4}}>2º olho: {brDate(r.second_eye_date)}</small>}</div>:<span className="muted">—</span>}</td><td><PatientCell name={r.patient} phone={r.whatsapp} birthDate={r.patient_birth_date}/></td>
             <td>{r.doctor}</td><td>{r.indicatedBy||<span className="muted">—</span>}</td><td><b>{r.surgery_type}</b>{r.classification_review&&<small className="classification-review">Revisar classificação</small>}</td><td><LinkedProceduresCell names={r.procedure_names}/></td><td>{r.eye}</td><td>{r.insurance}</td>
             <td><span className={`status ${statusClass(r.status)}`}>{r.status}</span></td>
             <td><PaymentTrafficLight record={r} onClick={()=>openEditSurgery(r)}/></td>
@@ -6185,7 +5061,9 @@ function App(){
                 <button type="button" className="btn btn-edit-soft daily-edit-btn" onClick={()=>openDailyReportEdit(r)}>Editar</button>
               </div>
             </div>
-            <div><b>DATA DO AGENDAMENTO:</b> {brDate(r.date)} &nbsp; <b>DATA DA REALIZAÇÃO:</b> {brDate(r.report_source==='surgery'?(r.scheduled_on||''):(r.realization_date||''))||'—'}</div>
+            <div><b>DATA DO AGENDAMENTO:</b> {brDate(r.date)} &nbsp; <b>DATA DA REALIZAÇÃO:</b> {brDate(r.report_source==='surgery'?(r.report_realization_date||r.scheduled_on||''):(r.realization_date||''))||'—'}</div>
+            {r.report_source==='surgery'&&r.report_eye_stage&&<div><b>ETAPA:</b> {r.report_eye_stage}</div>}
+            {r.report_source==='surgery'&&r.report_other_eye_date&&<div><b>{r.report_other_eye_label}:</b> {brDate(r.report_other_eye_date)}</div>}
             {r.report_source==='surgery'&&<div><b>LIO:</b> {r.lio_description||'—'}</div>}
             <div><b>CONVÊNIO:</b> {r.insurance||financeOrigin(r)||'Particular'}</div>
             <div><b>NOME DO PACIENTE:</b> <strong>{r.patient}</strong>{r.patient_birth_date?` — Nasc. ${brDate(r.patient_birth_date)}`:''}</div>
@@ -7690,7 +6568,7 @@ function App(){
         <div className="form-section finance-section full">
           <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor sugerido automaticamente pela tabela, com edição manual quando necessário. Pagamento é obrigatório.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value,price_manual:true})}/><small>{examForm.price_manual?'Valor ajustado manualmente.':examAutoPrice?`Prévia automática pela tabela: ${examAutoPrice.labels.join(' + ')}.`:'Selecione o atendimento. Antes de escolher convênio/Particular, a prévia usa o valor Particular e recalcula automaticamente depois.'} Você pode editar este valor.</small></div></Field>
+            <div className={fieldError('exam','total_amount')?'field-error full':'full'}><Field label="Valor total (R$) *" full><div className="auto-price-field"><input required type="number" min="0" step="0.01" value={examForm.total_amount} onChange={e=>setExamForm({...examForm,total_amount:e.target.value,price_manual:true})}/><small>{examForm.price_manual?'Valor ajustado manualmente.':examAutoPrice?`Prévia automática pela tabela oficial de exames: ${examAutoPrice.labels.join(' + ')}.`:'Selecione convênio/Particular, olho e exame para calcular a prévia quando houver valor cadastrado na tabela.'} Você pode editar este valor.</small></div></Field></div>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={examForm.discount_amount||''} onChange={e=>setExamForm({...examForm,discount_amount:e.target.value})}/></Field>
             <div className={fieldError('exam','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={examForm} setForm={setExamForm}/></div>
             <PaymentBreakdownEditor form={examForm} setForm={setExamForm} insurances={insurances}/>
@@ -7874,29 +6752,30 @@ function App(){
             <div className={fieldError('surgery','scheduled_on')?'field-error':''}><Field label="Data da realização *"><input required type="date" value={sForm.scheduled_on||''} onChange={e=>setSForm({...sForm,scheduled_on:e.target.value})}/></Field></div>
             <div className={fieldError('surgery','patient')?'field-error':''}><Field label="Paciente *"><input required value={sForm.patient} onChange={e=>setSForm({...sForm,patient:e.target.value})}/></Field></div>
             <Field label="Data de nascimento"><input type="date" value={sForm.patient_birth_date||''} onChange={e=>setSForm({...sForm,patient_birth_date:e.target.value})}/></Field>
-            <div className={fieldError('surgery','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={sForm.coverage_choice||''} setValue={v=>setSForm({...sForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
-            <Field label="Cirurgia *"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v,price_manual:false})} options={surgeryTypes} first="Selecione a cirurgia"/></Field>
-            <Field label="LIO / lente (quando aplicável)"><input value={sForm.lio_description||''} onChange={e=>setSForm({...sForm,lio_description:e.target.value,price_manual:false})} placeholder="Ex.: Asférica / Trifocal / Mono Tórica"/></Field>
-            <div className={fieldError('surgery','eye')?'field-error':''}><Field label="Olho *"><Select value={sForm.eye||''} setValue={v=>setSForm({...sForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
+            <div className={fieldError('surgery','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={sForm.coverage_choice||''} setValue={v=>setSForm({...sForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio'})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
+            <div className={fieldError('surgery','surgery_type_id')?'field-error':''}><Field label="Cirurgia *"><Select value={sForm.surgery_type_id||''} setValue={v=>setSForm({...sForm,surgery_type_id:v})} options={surgeryTypes} first="Selecione a cirurgia"/></Field></div>
+            <Field label="LIO / lente (quando aplicável)"><input value={sForm.lio_description||''} onChange={e=>setSForm({...sForm,lio_description:e.target.value})} placeholder="Ex.: Asférica / Trifocal / Mono Tórica"/></Field>
+            <div className={fieldError('surgery','eye')?'field-error':''}><Field label="Olho *"><Select value={sForm.eye||''} setValue={v=>setSForm({...sForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
+            {isCataractBothEyes&&<div className={fieldError('surgery','second_eye_date')?'field-error':''}><Field label="Próxima realização — 2º olho *"><input required type="date" min={sForm.scheduled_on||undefined} value={sForm.second_eye_date||''} onChange={e=>setSForm({...sForm,second_eye_date:e.target.value})}/><small>Para catarata em ambos os olhos. Esta data fica no mesmo lançamento e não cria outra cirurgia.</small></Field></div>}
             <Field label="Status"><Select value={sForm.status} setValue={v=>setSForm({...sForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
             <div className={fieldError('surgery','indicated_by_doctor_id')?'field-error':''}><Field label="Médico que indicou *"><Select value={sForm.indicated_by_doctor_id||''} setValue={v=>setSForm({...sForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
             <Field label="Cirurgião que realizou / realizará *"><Select value={sForm.doctor_id} setValue={v=>setSForm({...sForm,doctor_id:v})} options={doctors} first="Selecione"/></Field>
             <Field label="Procedimentos vinculados (opcional)" full>
               <div className="procedure-multi-select"><div className="procedure-multi-head"><span>Selecione apenas os procedimentos que pertencem a este pacote</span><b>{sForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">
-                {procedureOptions.map(procedure=>{const checked=sForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=sForm.procedure_ids||[];setSForm({...sForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}
+                {procedureOptions.map(procedure=>{const checked=sForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=sForm.procedure_ids||[];setSForm({...sForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id]});}}/><span>{procedure.name}</span></label>;})}
               </div></div>
             </Field>
           </div>
         </div>
 
         <div className="form-section finance-section full">
-          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor do pacote sugerido automaticamente pela tabela, incluindo adicionais dos procedimentos quando houver. O valor continua editável.</small></div></div>
+          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Informe o valor manualmente. O campo Valor total é obrigatório para salvar.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value,price_manual:true})} placeholder="0,00"/><small>{sForm.price_manual?'Valor ajustado manualmente.':surgeryAutoPrice?`Prévia automática pela tabela: ${surgeryAutoPrice.labels.join(' + ')}${(sForm.procedure_ids||[]).some(id=>sForm.procedure_finance?.[id]?.included===false)?' + adicionais dos procedimentos':''}.`:'Selecione a cirurgia. A prévia começa pela tabela Particular e recalcula ao escolher convênio, olho e lente quando aplicável.'} Você pode editar este valor.</small></div></Field>
+            <div className={fieldError('surgery','total_amount')?'field-error full':'full'}><Field label="Valor total (R$) *" full><div className="auto-price-field"><input required type="number" min="0" step="0.01" value={sForm.total_amount} onChange={e=>setSForm({...sForm,total_amount:e.target.value,price_manual:true})} placeholder="0,00"/><small>Preenchimento manual obrigatório. O sistema não calcula nem altera automaticamente o valor da cirurgia.</small></div></Field></div>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={sForm.discount_amount||''} onChange={e=>setSForm({...sForm,discount_amount:e.target.value})}/></Field>
             <div className={fieldError('surgery','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={sForm} setForm={setSForm}/></div>
             <PaymentBreakdownEditor form={sForm} setForm={setSForm} insurances={insurances}/>
-            {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};const autoProc=sForm.coverage_choice?automaticPriceForItem({kind:'procedure',name:proc?.name||'',origin:explicitOrigin(sForm),insuranceName:insuranceNameById(sForm.insurance_id),eye:sForm.eye,associatedWithSurgery:true}):null;return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked,amount:e.target.checked?(cfg.amount||''):((cfg.amount||autoProc?.amount)?String(cfg.amount||autoProc.amount):'')}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<div><input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional" value={cfg.amount||''} onChange={e=>setSForm({...sForm,price_manual:false,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/>{autoProc&&<small className="package-auto-price">Tabela: {moneyBR(autoProc.amount)}</small>}</div>:<span className="package-included-label">Incluído no valor do pacote</span>}</div>})}</div>}
+            {sForm.procedure_ids?.length>0&&<div className="package-finance-box full"><div className="package-finance-head"><b>Procedimentos do pacote</b><span>Por padrão ficam incluídos no valor total. Informe manualmente um adicional somente quando houver cobrança separada.</span></div>{sForm.procedure_ids.map(id=>{const proc=procedureOptions.find(p=>p.id===id);const cfg=sForm.procedure_finance?.[id]||{included:true,amount:''};return <div className="package-finance-row" key={id}><span>{proc?.name||'Procedimento'}</span><label className="package-check"><input type="checkbox" checked={cfg.included!==false} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,included:e.target.checked,amount:e.target.checked?(cfg.amount||''):cfg.amount||''}}})}/><b>Incluído no pacote</b></label>{cfg.included===false?<div><input className="package-extra-input" type="number" min="0" step="0.01" placeholder="Valor adicional manual" value={cfg.amount||''} onChange={e=>setSForm({...sForm,procedure_finance:{...(sForm.procedure_finance||{}),[id]:{...cfg,amount:e.target.value}}})}/></div>:<span className="package-included-label">Incluído no valor do pacote</span>}</div>})}</div>}
             <Field label="Nota fiscal / comprovante nº"><input value={sForm.invoice_number||''} onChange={e=>setSForm({...sForm,invoice_number:e.target.value})} placeholder="Número ou referência"/></Field>
             <Field label="Data de emissão"><input type="date" value={sForm.invoice_issued_date||''} onChange={e=>setSForm({...sForm,invoice_issued_date:e.target.value})}/></Field>
             <FinancialDocumentsField form={sForm} setForm={setSForm} onOpen={openInvoiceFile} onDownload={downloadInvoiceFile}/>
@@ -7927,19 +6806,19 @@ function App(){
             <div className={fieldError('procedure','realization_date')?'field-error':''}><Field label="Data da realização *"><input required type="date" value={pForm.realization_date||''} onChange={e=>setPForm({...pForm,realization_date:e.target.value})}/></Field></div>
             <div className={fieldError('procedure','patient')?'field-error':''}><Field label="Paciente *"><input required value={pForm.patient} onChange={e=>setPForm({...pForm,patient:e.target.value})}/></Field></div>
             <Field label="Data de nascimento"><input type="date" value={pForm.patient_birth_date||''} onChange={e=>setPForm({...pForm,patient_birth_date:e.target.value})}/></Field>
-            <div className={fieldError('procedure','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={pForm.coverage_choice||''} setValue={v=>setPForm({...pForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio',price_manual:false})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','coverage_choice')?'field-error':''}><Field label="Convênio / Particular *"><Select value={pForm.coverage_choice||''} setValue={v=>setPForm({...pForm,coverage_choice:v,insurance_id:v==='__PARTICULAR__'?'':v,payment_origin:v==='__PARTICULAR__'?'Particular':'Convênio'})} options={[{id:'__PARTICULAR__',name:'Particular'},...insurances]} first="Selecione"/></Field></div>
             <div className={fieldError('procedure','indicated_by_doctor_id')?'field-error':''}><Field label="Médico que indicou *"><Select value={pForm.indicated_by_doctor_id||''} setValue={v=>setPForm({...pForm,indicated_by_doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
             <div className={fieldError('procedure','doctor_id')?'field-error':''}><Field label="Médico que realizou / realizará *"><Select value={pForm.doctor_id} setValue={v=>setPForm({...pForm,doctor_id:v})} options={doctors} first="Selecione"/></Field></div>
-            <div className={fieldError('procedure','eye')?'field-error':''}><Field label="Olho *"><Select value={pForm.eye||''} setValue={v=>setPForm({...pForm,eye:v,price_manual:false})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
+            <div className={fieldError('procedure','eye')?'field-error':''}><Field label="Olho *"><Select value={pForm.eye||''} setValue={v=>setPForm({...pForm,eye:v})} options={['Não se aplica','Direito (OD)','Esquerdo (OE)','Ambos (AO)']} first="Selecione"/></Field></div>
             <Field label="Status"><Select value={pForm.status} setValue={v=>setPForm({...pForm,status:v})} options={['Solicitação','Pendente','Autorizada','Agendada','Realizada','Cancelada']}/></Field>
-            <div className={fieldError('procedure','procedure_ids')?'field-error full':'full'}><Field label="Procedimentos *" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id],price_manual:false});}}/><span>{procedure.name}</span></label>;})}</div></div></Field></div>
+            <div className={fieldError('procedure','procedure_ids')?'field-error full':'full'}><Field label="Procedimentos *" full><div className="procedure-multi-select"><div className="procedure-multi-head"><span>Um ou vários procedimentos podem permanecer no mesmo lançamento</span><b>{pForm.procedure_ids?.length||0} selecionado(s)</b></div><div className="procedure-options">{procedureOptions.map(procedure=>{const checked=pForm.procedure_ids?.includes(procedure.id);return <label key={procedure.id} className={`procedure-option ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const ids=pForm.procedure_ids||[];setPForm({...pForm,procedure_ids:checked?ids.filter(id=>id!==procedure.id):[...ids,procedure.id]});}}/><span>{procedure.name}</span></label>;})}</div></div></Field></div>
           </div>
         </div>
 
         <div className="form-section finance-section full">
-          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Valor sugerido automaticamente pela tabela. Você pode ajustar manualmente quando necessário.</small></div></div>
+          <div className="form-section-title finance"><span>2</span><div><b>FINANCEIRO</b><small>Informe o valor manualmente. O campo Valor total é obrigatório para salvar.</small></div></div>
           <div className="form-section-grid finance-simple-grid">
-            <Field label="Valor total (R$)" full><div className="auto-price-field"><input type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value,price_manual:true})}/><small>{pForm.price_manual?'Valor ajustado manualmente.':procedureAutoPrice?`Prévia automática pela tabela: ${procedureAutoPrice.labels.join(' + ')}.`:'Selecione o procedimento. A prévia aparece imediatamente e é recalculada ao escolher convênio/Particular quando houver diferença de tabela.'} Você pode editar este valor.</small></div></Field>
+            <div className={fieldError('procedure','total_amount')?'field-error full':'full'}><Field label="Valor total (R$) *" full><div className="auto-price-field"><input required type="number" min="0" step="0.01" value={pForm.total_amount} onChange={e=>setPForm({...pForm,total_amount:e.target.value,price_manual:true})}/><small>Preenchimento manual obrigatório. O sistema não calcula nem altera automaticamente o valor do procedimento.</small></div></Field></div>
             <Field label="Desconto (R$)"><input type="number" min="0" step="0.01" value={pForm.discount_amount||''} onChange={e=>setPForm({...pForm,discount_amount:e.target.value})}/></Field>
             <div className={fieldError('procedure','payment_confirmed')?'field-error full':'full'}><FinanceQuickSummary form={pForm} setForm={setPForm}/></div>
             <PaymentBreakdownEditor form={pForm} setForm={setPForm} insurances={insurances}/>
@@ -8156,47 +7035,5 @@ function App(){
   </div>;
 }
 
-function Catalog({title,description,placeholder='Adicionar novo',items,onAdd,onRemove,onMove,moveLabel}){
-  const [value,setValue]=useState('');
-
-  const submit = async ()=>{
-    const clean=value.trim();
-    if(!clean) return;
-    const saved=await onAdd(clean);
-    if(saved!==false) setValue('');
-  };
-
-  return <div className="catalog-card catalog-card-large">
-    <div className="catalog-card-head">
-      <div>
-        <h3>{title}</h3>
-        {description&&<p>{description}</p>}
-      </div>
-      <span className="catalog-count">{items.length}</span>
-    </div>
-
-    <div className="inline-add">
-      <input
-        value={value}
-        onChange={e=>setValue(e.target.value)}
-        onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();submit();}}}
-        placeholder={placeholder}
-      />
-      <button className="btn btn-primary" onClick={submit} disabled={!value.trim()}>+ Adicionar</button>
-    </div>
-
-    <div className="catalog-list">
-      {items.length ? items.map(x=>
-        <div className="catalog-item" key={x.id}>
-          <span>{x.name}</span>
-          <div className="catalog-item-actions">
-            {onMove&&<button className="catalog-move-btn" title={moveLabel||'Mover item'} onClick={()=>onMove(x.id)}>↔</button>}
-            <button title={`Remover ${x.name}`} onClick={()=>onRemove(x.id)}>×</button>
-          </div>
-        </div>
-      ) : <div className="catalog-empty">Nenhum cadastro ativo.</div>}
-    </div>
-  </div>;
-}
 
 createRoot(document.getElementById('root')).render(<><V36PaymentSummaryStyle/><V40LoginPriceStyle/><V42AlignmentStyle/><App/></>);
